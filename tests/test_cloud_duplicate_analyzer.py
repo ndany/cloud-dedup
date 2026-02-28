@@ -57,6 +57,8 @@ class TestClassifyPair(unittest.TestCase):
         self.assertEqual(result, ("different", "phantom"))
 
     def test_no_match_different_size(self):
+        # This guard is dead code at the real call site (caller always passes records
+        # from the same (name, size) index key), but is retained as a defensive check.
         a = self._rec("f.txt", b"hello", subdir="a")
         b = self._rec("f.txt", b"hi", subdir="b")
         result = cda.classify_pair(a, b, mtime_fuzz=5.0, use_checksum=True)
@@ -78,6 +80,22 @@ class TestClassifyPair(unittest.TestCase):
         a = self._rec("empty.txt", b"", mtime=1000.0, subdir="a")
         b = self._rec("empty.txt", b"", mtime=9000.0, subdir="b")
         result = cda.classify_pair(a, b, mtime_fuzz=5.0, use_checksum=True)
+        self.assertEqual(result, ("identical", "same"))
+
+    def test_hash_failure_falls_back_to_mtime(self):
+        """If MD5 cannot be read (e.g. file deleted after stat), falls back to unverified."""
+        a = self._rec("f.txt", b"hello", mtime=1000.0, subdir="a")
+        b = self._rec("f.txt", b"hello", mtime=1000.0, subdir="b")
+        # Point one record at a non-existent path to trigger hash failure
+        a = dict(a, full_path=Path(self.tmp) / "a" / "nonexistent.txt")
+        result = cda.classify_pair(a, b, mtime_fuzz=5.0, use_checksum=True)
+        self.assertEqual(result, ("unverified", "same"))
+
+    def test_no_checksum_empty_file_still_identical(self):
+        """Empty files are always identical/same, even with use_checksum=False."""
+        a = self._rec("empty.txt", b"", mtime=1000.0, subdir="a")
+        b = self._rec("empty.txt", b"", mtime=9000.0, subdir="b")
+        result = cda.classify_pair(a, b, mtime_fuzz=5.0, use_checksum=False)
         self.assertEqual(result, ("identical", "same"))
 
 
