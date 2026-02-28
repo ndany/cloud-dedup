@@ -504,6 +504,43 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
 
 # ─────────────────────────────────────────────────────── HTML report ──
 
+
+def _file_sym(content_match: str, version_status: str) -> tuple:
+    """Returns (symbol_char, css_class) for a file classification."""
+    if content_match in ("identical", "unverified") and version_status == "same":
+        return ("★", "sym-is")
+    if content_match in ("identical", "unverified") and version_status == "diverged":
+        return ("✓", "sym-id")
+    if content_match == "different" and version_status == "diverged":
+        return ("⚠", "sym-dd")
+    if content_match == "different" and version_status == "phantom":
+        return ("⚡", "sym-dp")
+    return ("~", "sym-id")
+
+
+def _build_folder_tree(folder_comparisons: list) -> dict:
+    """
+    Build a nested dict from flat folder_comparisons.
+    Each node: {"_fc": fc_or_None, "_children": {name: node}}
+    Sorted insertion; root nodes have no "/" in their folder_path.
+    """
+    tree = {}
+    for fc in sorted(folder_comparisons, key=lambda x: x["folder_path"]):
+        path = fc["folder_path"]
+        if path == "(root)":
+            tree.setdefault("(root)", {"_fc": None, "_children": {}})
+            tree["(root)"]["_fc"] = fc
+            continue
+        parts = path.split("/")
+        node = tree
+        for part in parts[:-1]:
+            node = node.setdefault(part, {"_fc": None, "_children": {}})["_children"]
+        leaf = parts[-1]
+        if leaf not in node:
+            node[leaf] = {"_fc": None, "_children": {}}
+        node[leaf]["_fc"] = fc
+    return tree
+
 CSS = """
 body { font-family: Arial, sans-serif; font-size: 14px; color: #1a1a1a;
        max-width: 1100px; margin: 40px auto; padding: 0 20px; }
@@ -546,6 +583,20 @@ details { margin: 6px 0; }
 code { background:#f0f0f0; padding:1px 4px; border-radius:3px; font-size:12px; }
 .footer { margin-top:60px; font-size:12px; color:#888; text-align:center;
           border-top:1px solid #ddd; padding-top:12px; }
+.tree-node > details { margin-left: 20px; border-left: 2px solid #e0e8f0;
+                       padding-left: 8px; }
+.tree-node summary { list-style: none; cursor: pointer; padding: 4px 0;
+                     user-select: none; }
+.tree-node summary::-webkit-details-marker { display: none; }
+.tree-file { font-size: 12px; font-family: monospace; padding: 2px 0 2px 24px; }
+.tree-file-section { font-size: 11px; font-weight: bold; color: #555;
+                     margin: 6px 0 2px 12px; padding-bottom: 2px;
+                     border-bottom: 1px solid #eee; }
+.sym-is { color: #28a745; }
+.sym-id { color: #17a2b8; }
+.sym-dd { color: #dc3545; }
+.sym-dp { color: #fd7e14; }
+.sym-uniq { color: #6c757d; }
 """
 
 def badge(text, cls=None):
@@ -607,8 +658,8 @@ Comparing {n} directories</p>
                  f"{result.get('mtime_fuzz', 5)} seconds. "
                  f"MD5 checksums were computed for ambiguous cases.</p>")
 
-    # ── section 3: duplicate file list ──
-    parts.append(f"<h2>3. Duplicate Files ({len(dups)} confirmed)</h2>")
+    # ── section 5: duplicate file list ──
+    parts.append(f"<h2>5. Duplicate Files ({len(dups)} confirmed)</h2>")
     if not dups:
         parts.append("<p>No duplicate files found.</p>")
     else:
@@ -689,73 +740,171 @@ Comparing {n} directories</p>
             )
         parts.append("</table>")
 
-    # ── section 5: folder comparisons ──
-    fc_list = result["folder_comparisons"]
-    rcounts = result["relationship_counts"]
-    parts.append(f"<h2>5. Folder Structure Analysis ({len(fc_list)} shared folders)</h2>")
-    parts.append('<div class="stat-grid">')
-    for rel, cnt in sorted(rcounts.items()):
-        parts.append(f'<div class="stat-card"><div class="num">{cnt}</div>'
-                     f'<div class="lbl">{badge(rel)} folders</div></div>')
+    # ── section 3: folder structure analysis ──
+    fc_list        = result["folder_comparisons"]
+    safe_roots     = result.get("safe_to_delete_roots", [])
+    file_cls       = result.get("_file_classifications", {})
+    scanned_recs   = result.get("_scanned_records", {})
+
+    parts.append(f"<h2>3. Folder Structure Analysis ({len(fc_list)} shared folders)</h2>")
+
+    # ── part 1: actionability panel ──
+    parts.append("<h3>Fully duplicated subtrees — safe to delete</h3>")
+    if not safe_roots:
+        parts.append(
+            "<p>No folder subtrees are fully identical across all services.</p>"
+        )
+    else:
+        parts.append(
+            "<p>Each subtree below is 100% identical across all copies. "
+            "Deleting from any one service is safe.</p>"
+        )
+        svc_hdrs = "".join(f'<th>{html.escape(l)}</th>' for l in labels)
+        parts.append(
+            f'<table><tr><th>Folder</th>{svc_hdrs}<th>Files in subtree</th></tr>'
+        )
+        for fc in sorted(safe_roots, key=lambda x: x["folder_path"]):
+            svc_cells = "".join(
+                '<td style="color:#28a745;font-weight:bold">✓</td>'
+                if l in fc["services_present"] else
+                '<td style="color:#aaa">—</td>'
+                for l in labels
+            )
+            parts.append(
+                f'<tr>'
+                f'<td><code>{html.escape(fc["folder_path"])}</code></td>'
+                f'{svc_cells}'
+                f'<td>{fc["subtree_total_files"]:,}</td>'
+                f'</tr>'
+            )
+        parts.append("</table>")
+
+    # ── part 2: folder tree ──
+    parts.append("<h3>Folder tree</h3>")
+    parts.append(
+        "<p>Expand any folder to see file-level detail. "
+        "★ = fully identical subtree; ~ = partially duplicated; ✗ = has conflicts.</p>"
+    )
+
+    # Build per-folder file list: folder_str → {label → [name_orig]}
+    folder_label_names: dict = defaultdict(lambda: defaultdict(list))
+    for label, recs in scanned_recs.items():
+        for r in recs:
+            folder_key = r["folder"] if r["folder"] != "." else "(root)"
+            folder_label_names[folder_key][label].append(r["name"])  # already lowercased
+
+    def render_node(name: str, node: dict) -> list:
+        fc = node.get("_fc")
+        children = node.get("_children", {})
+        out = []
+        if fc is None and not children:
+            return out
+
+        ss = fc["subtree_status"] if fc else "partial"
+        node_sym, node_cls = {
+            "identical": ("★", "sym-is"),
+            "partial":   ("~", "sym-id"),
+            "overlap":   ("✗", "sym-dd"),
+        }.get(ss, ("?", ""))
+
+        file_ct     = fc["total_unique_files"] if fc else 0
+        subtree_ct  = fc["subtree_total_files"] if fc else 0
+        child_ct    = len(children)
+        folder_path = fc["folder_path"] if fc else name
+
+        summary_html = (
+            f'<span class="{node_cls}">{node_sym}</span> '
+            f'<strong>{html.escape(name)}/</strong>'
+            f'&nbsp;<span style="color:#888;font-size:12px">'
+            f'{html.escape(ss)}'
+            + (f' &nbsp;·&nbsp; {file_ct} files' if file_ct else '')
+            + (f' &nbsp;·&nbsp; {child_ct} subfolders' if child_ct else '')
+            + (f' &nbsp;·&nbsp; {subtree_ct} total' if child_ct and subtree_ct != file_ct else '')
+            + '</span>'
+        )
+
+        out.append(f'<div class="tree-node"><details><summary>{summary_html}</summary>')
+
+        # File list for this folder
+        if fc:
+            fpath = fc["folder_path"]
+            per_label = folder_label_names.get(fpath, {})
+
+            # Collect all unique filenames in this folder across all services
+            all_names = set()
+            for names in per_label.values():
+                all_names.update(names)
+
+            in_multiple = []
+            unique_to: dict = defaultdict(list)
+
+            for fname in sorted(all_names):
+                labels_with = [l for l in labels if fname in per_label.get(l, [])]
+                if len(labels_with) >= 2:
+                    cls_info = file_cls.get((fname, fpath))
+                    in_multiple.append((fname, cls_info))
+                elif labels_with:
+                    unique_to[labels_with[0]].append(fname)
+
+            if in_multiple:
+                out.append('<div class="tree-file-section">In all services</div>')
+                for fname, cls_info in in_multiple:
+                    if cls_info:
+                        sym, sym_cls = _file_sym(
+                            cls_info["content_match"], cls_info["version_status"]
+                        )
+                        link = ""
+                        if cls_info.get("conflict_index") is not None:
+                            link = (
+                                f' <a href="#action-{cls_info["conflict_index"]}" '
+                                f'style="font-size:10px;color:#888">&rarr;&nbsp;&sect;4</a>'
+                            )
+                        out.append(
+                            f'<div class="tree-file">'
+                            f'<span class="{sym_cls}">{sym}</span> '
+                            f'{html.escape(fname)}{link}</div>'
+                        )
+                    else:
+                        out.append(
+                            f'<div class="tree-file">· {html.escape(fname)}</div>'
+                        )
+
+            for label in labels:
+                ufiles = unique_to.get(label, [])
+                if ufiles:
+                    out.append(
+                        f'<div class="tree-file-section">'
+                        f'Only in {html.escape(label)}</div>'
+                    )
+                    for fname in ufiles:
+                        out.append(
+                            f'<div class="tree-file">'
+                            f'<span class="sym-uniq">&rarr;</span> '
+                            f'{html.escape(fname)}</div>'
+                        )
+
+        # Recurse into children
+        for child_name in sorted(children):
+            out.extend(render_node(child_name, children[child_name]))
+
+        out.append("</details></div>")
+        return out
+
+    tree = _build_folder_tree(fc_list)
+    parts.append('<div style="margin:12px 0">')
+    for root_name in sorted(tree):
+        parts.extend(render_node(root_name, tree[root_name]))
     parts.append("</div>")
 
-    # Group by relationship
-    for rel_type in ["identical", "subset/superset", "overlap"]:
-        subset = [fc for fc in fc_list if fc["relationship"] == rel_type]
-        if not subset:
-            continue
-        label_str = rel_type.capitalize()
-        parts.append(f"<h3>{label_str} folders ({len(subset)})</h3>")
-
-        if rel_type == "identical":
-            parts.append('<table><tr><th>Folder</th><th>Services</th><th>Files</th></tr>')
-            for fc in sorted(subset, key=lambda x: x["folder_path"]):
-                svc = ", ".join(fc["services_present"])
-                parts.append(f'<tr><td><code>{html.escape(fc["folder_path"])}</code></td>'
-                             f'<td>{html.escape(svc)}</td>'
-                             f'<td>{fc["files_in_all"]}</td></tr>')
-            parts.append("</table>")
-
-        elif rel_type == "subset/superset":
-            parts.append('<table><tr><th>Folder</th><th>Services</th><th>Relationship</th></tr>')
-            for fc in sorted(subset, key=lambda x: x["folder_path"]):
-                svc = ", ".join(fc["services_present"])
-                d = fc["details"]
-                only_lines = []
-                for label in fc["services_present"]:
-                    onlys = d.get(f"{label}_only", [])
-                    if onlys:
-                        only_lines.append(f'{label} has {len(onlys)} extra file(s): '
-                                          + ", ".join(onlys[:5])
-                                          + ("…" if len(onlys) > 5 else ""))
-                rel_desc = "; ".join(only_lines) if only_lines else "—"
-                parts.append(f'<tr><td><code>{html.escape(fc["folder_path"])}</code></td>'
-                             f'<td>{html.escape(svc)}</td>'
-                             f'<td>{html.escape(rel_desc)}</td></tr>')
-            parts.append("</table>")
-
-        else:  # overlap
-            parts.append('<table><tr><th>Folder</th><th>In all</th>'
-                         + "".join(f'<th>{html.escape(l)} only</th>' for l in labels)
-                         + '</tr>')
-            for fc in sorted(subset, key=lambda x: x["folder_path"]):
-                d = fc["details"]
-                in_all = len(d.get("in_all", []))
-
-                def fmt_only(lbl):
-                    items = d.get(f"{lbl}_only", [])
-                    if not items:
-                        return '<span style="color:#aaa">—</span>'
-                    preview = ", ".join(items[:3])
-                    if len(items) > 3:
-                        preview += f' (+{len(items)-3} more)'
-                    return html.escape(preview)
-
-                only_cells = "".join(f'<td style="font-size:12px">{fmt_only(l)}</td>'
-                                     for l in labels)
-                parts.append(f'<tr><td><code>{html.escape(fc["folder_path"])}</code></td>'
-                             f'<td>{in_all}</td>{only_cells}</tr>')
-            parts.append("</table>")
+    parts.append(
+        "<p style='font-size:12px;color:#888;margin-top:12px'>"
+        "★ identical&nbsp;·&nbsp;same &nbsp;|&nbsp; "
+        "✓ identical&nbsp;·&nbsp;diverged &nbsp;|&nbsp; "
+        "⚠ different&nbsp;·&nbsp;diverged &nbsp;|&nbsp; "
+        "⚡ different&nbsp;·&nbsp;phantom &nbsp;|&nbsp; "
+        "&rarr; unique to one service"
+        "</p>"
+    )
 
     # ── footer ──
     parts.append(f'<div class="footer">Cloud Storage Duplicate Analysis · '
