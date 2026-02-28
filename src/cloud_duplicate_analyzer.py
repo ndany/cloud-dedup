@@ -528,6 +528,12 @@ tr:nth-child(even) td { background: #f4f8fc; }
 .badge-exact      { background:#d4edda; color:#155724; }
 .badge-likely     { background:#fff3cd; color:#856404; }
 .warn-row td      { background:#fff8e1 !important; }
+.action-row    { }
+.phantom-row td { background:#fff8e1 !important; }
+.conflict-row td { background:#fff0f0 !important; }
+.service-detail { font-size:12px; line-height:1.6; }
+.badge-phantom  { background:#fff3cd; color:#856404; }
+.badge-different { background:#f8d7da; color:#721c24; }
 .stat-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr));
              gap:16px; margin:20px 0; }
 .stat-card { background:#f0f6fc; border:1px solid #c5d8ec; border-radius:8px;
@@ -625,30 +631,62 @@ Comparing {n} directories</p>
                          f'<td>{version_cell}</td></tr>')
         parts.append("</table>")
 
-    # ── section 4: version diverged ──
-    parts.append(f"<h2>4. Version-Diverged Files ({len(divs)} files — action required)</h2>")
-    if not divs:
-        parts.append("<p>All duplicate files have identical modification timestamps — no action needed.</p>")
+    # ── section 4: files requiring action ──
+    conflicts = result.get("conflict_groups", [])
+    parts.append(f"<h2>4. Files Requiring Action ({len(conflicts)} files)</h2>")
+    if not conflicts:
+        parts.append(
+            "<p>No content conflicts found — all matched files have identical content "
+            "(or matching was skipped with <code>--no-checksum</code>).</p>"
+        )
     else:
-        parts.append("<p>These files have copies with different modification dates across services. "
-                     "Review them to decide which version to keep before removing duplicates.</p>")
-        parts.append('<table><tr><th>File</th><th>Path</th><th>Newest version in</th>'
-                     '<th>Age gap (days)</th><th>Copy dates</th></tr>')
-        for g in sorted(divs, key=lambda x: -x["age_difference_days"]):
+        parts.append(
+            "<p>These files share a name and size across services but have "
+            "<strong>different content</strong>. Review each before deleting any copy.</p>"
+            "<p>"
+            "<strong>⚠ different&nbsp;·&nbsp;diverged</strong> — content differs, "
+            "timestamps differ; keep the newer copy.<br>"
+            "<strong>⚡ different&nbsp;·&nbsp;phantom</strong> — content differs despite "
+            "matching timestamps; keep both copies.</p>"
+        )
+        svc_headers = "".join(
+            f'<th>{html.escape(l)}</th>' for l in labels
+        )
+        parts.append(
+            f'<table><tr><th>File</th><th>Folder</th><th>Status</th>{svc_headers}</tr>'
+        )
+        for i, g in enumerate(sorted(conflicts, key=lambda x: x["rel_path"])):
             rp = Path(g["rel_path"])
             folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
-            copy_mtimes = (
-                g["copy_mtimes"] if "copy_mtimes" in g
-                else {l: sd["mtime"] for l, sd in g.get("service_details", {}).items()}
+            vs = g["version_status"]
+            symbol = "⚡" if vs == "phantom" else "⚠"
+            row_cls = "phantom-row" if vs == "phantom" else "conflict-row"
+            status_parts = [f"different&nbsp;·&nbsp;{html.escape(vs)}"]
+            if vs == "diverged" and g.get("newest_in"):
+                status_parts.append(
+                    f'<br><span style="font-size:11px;color:#666">'
+                    f'newer in {html.escape(g["newest_in"])}</span>'
+                )
+
+            svc_cells = ""
+            for label in labels:
+                det = g["service_details"].get(label)
+                if det:
+                    svc_cells += (
+                        f'<td class="service-detail">'
+                        f'{human_size(det["size"])}<br>'
+                        f'{html.escape(det["mtime"])}</td>'
+                    )
+                else:
+                    svc_cells += '<td style="color:#aaa">—</td>'
+
+            parts.append(
+                f'<tr class="{row_cls}" id="action-{i}">'
+                f'<td><strong>{symbol} {html.escape(g["name_orig"])}</strong></td>'
+                f'<td><code>{html.escape(folder_str)}</code></td>'
+                f'<td>{"".join(status_parts)}</td>'
+                f'{svc_cells}</tr>'
             )
-            copy_dates = "<br>".join(
-                f'{html.escape(l)}: {t}' for l, t in copy_mtimes.items())
-            parts.append(f'<tr class="warn-row">'
-                         f'<td><strong>{html.escape(g["name_orig"])}</strong></td>'
-                         f'<td><code>{html.escape(folder_str)}</code></td>'
-                         f'<td><strong>{html.escape(g["newest_in"])}</strong></td>'
-                         f'<td>{g["age_difference_days"]:.1f}</td>'
-                         f'<td style="font-size:11px">{copy_dates}</td></tr>')
         parts.append("</table>")
 
     # ── section 5: folder comparisons ──
