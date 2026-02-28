@@ -104,7 +104,77 @@ class TestSubtreeRollup(unittest.TestCase):
 
 
 class TestAnalyzeIntegration(unittest.TestCase):
-    pass  # populated in Task 3
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil; shutil.rmtree(self.tmp)
+
+    def _run(self, files_a, files_b, use_checksum=True, mtime_fuzz=5.0):
+        """
+        files_a / files_b: list of (rel_path, content_bytes, mtime)
+        Returns result dict from analyze().
+        """
+        dir_a = Path(self.tmp) / "a"
+        dir_b = Path(self.tmp) / "b"
+        for rel, content, mtime in files_a:
+            make_file(dir_a, rel, content, mtime)
+        for rel, content, mtime in files_b:
+            make_file(dir_b, rel, content, mtime)
+        return cda.analyze(
+            [("A", dir_a), ("B", dir_b)],
+            mtime_fuzz=mtime_fuzz,
+            use_checksum=use_checksum,
+            skip_hidden=True,
+        )
+
+    def test_identical_same_goes_to_duplicate_groups(self):
+        r = self._run(
+            [("doc.txt", b"hello", 1000.0)],
+            [("doc.txt", b"hello", 1000.0)],
+        )
+        self.assertEqual(len(r["duplicate_groups"]), 1)
+        self.assertEqual(len(r["conflict_groups"]), 0)
+        g = r["duplicate_groups"][0]
+        self.assertEqual(g["content_match"], "identical")
+        self.assertEqual(g["version_status"], "same")
+
+    def test_different_phantom_goes_to_conflict_groups(self):
+        r = self._run(
+            [("doc.txt", b"hello", 1000.0)],
+            [("doc.txt", b"world", 1000.0)],
+        )
+        self.assertEqual(len(r["duplicate_groups"]), 0)
+        self.assertEqual(len(r["conflict_groups"]), 1)
+        g = r["conflict_groups"][0]
+        self.assertEqual(g["content_match"], "different")
+        self.assertEqual(g["version_status"], "phantom")
+
+    def test_different_diverged_goes_to_conflict_groups(self):
+        r = self._run(
+            [("doc.txt", b"hello", 1000.0)],
+            [("doc.txt", b"world", 9000.0)],
+        )
+        self.assertEqual(len(r["conflict_groups"]), 1)
+        self.assertEqual(r["conflict_groups"][0]["version_status"], "diverged")
+
+    def test_identical_diverged_goes_to_duplicate_groups(self):
+        r = self._run(
+            [("doc.txt", b"hello", 1000.0)],
+            [("doc.txt", b"hello", 9000.0)],
+        )
+        self.assertEqual(len(r["duplicate_groups"]), 1)
+        self.assertEqual(r["duplicate_groups"][0]["version_status"], "diverged")
+
+    def test_conflict_group_has_per_service_size_and_mtime(self):
+        r = self._run(
+            [("doc.txt", b"hello", 1000.0)],
+            [("doc.txt", b"world", 9000.0)],
+        )
+        g = r["conflict_groups"][0]
+        self.assertIn("A", g["service_details"])
+        self.assertIn("size", g["service_details"]["A"])
+        self.assertIn("mtime", g["service_details"]["A"])
 
 
 if __name__ == "__main__":

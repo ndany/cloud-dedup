@@ -233,8 +233,8 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         for r in recs:
             all_keys.add((r["name"], r["size"]))
 
-    duplicate_groups = []   # each: {"rel_path", "matches": {label: record}, "confidence"}
-    seen_keys = set()
+    duplicate_groups = []   # content_match: 'identical' or 'unverified'
+    conflict_groups  = []   # content_match: 'different'
 
     for key in all_keys:
         name, size = key
@@ -242,52 +242,93 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         for label in labels:
             hits = indexes[label].get(key, [])
             if hits:
-                present_in[label] = hits[0]   # take first if multiple (unusual)
+                present_in[label] = hits[0]
         if len(present_in) < 2:
             continue
-        # Verify pairwise
+
         label_list = list(present_in.keys())
-        confirmed = {}
-        confidence = "exact"
+
+        # Classify all pairs; the group classification is the worst-case pair.
+        # Precedence: different > unverified > identical
+        # version precedence: phantom > diverged > same
+        content_rank = {"identical": 0, "unverified": 1, "different": 2}
+        version_rank = {"same": 0, "diverged": 1, "phantom": 2}
+        group_content = "identical"
+        group_version = "same"
+        all_matched = True
+
         for la, lb in combinations(label_list, 2):
-            c = classify_pair(present_in[la], present_in[lb], mtime_fuzz, use_checksum)
-            if c is None or c[0] == "different":
+            result = classify_pair(
+                present_in[la], present_in[lb], mtime_fuzz, use_checksum
+            )
+            if result is None:
+                all_matched = False
                 break
-            if c[0] == "unverified":
-                confidence = "likely"
+            cm, vs = result
+            if content_rank[cm] > content_rank[group_content]:
+                group_content = cm
+            if version_rank[vs] > version_rank[group_version]:
+                group_version = vs
+
+        if not all_matched:
+            continue
+
+        rel = present_in[label_list[0]]["rel_path"]
+        name_orig = present_in[label_list[0]]["name_orig"]
+
+        service_details = {
+            label: {
+                "size":      present_in[label]["size"],
+                "mtime":     fmt_ts(present_in[label]["mtime"]),
+                "mtime_raw": present_in[label]["mtime"],
+            }
+            for label in present_in
+        }
+
+        group = {
+            "rel_path":        rel,
+            "name_orig":       name_orig,
+            "size":            size,
+            "matches":         {label: present_in[label] for label in present_in},
+            "content_match":   group_content,
+            "version_status":  group_version,
+            "service_details": service_details,
+            "newest_in": (
+                max(present_in, key=lambda l: present_in[l]["mtime"])
+                if group_version in ("diverged", "phantom") else None
+            ),
+            "age_difference_days": round(
+                (max(r["mtime"] for r in present_in.values()) -
+                 min(r["mtime"] for r in present_in.values())) / 86400, 2
+            ),
+        }
+
+        if group_content == "different":
+            conflict_groups.append(group)
         else:
-            for label in present_in:
-                confirmed[label] = present_in[label]
+            duplicate_groups.append(group)
 
-        if len(confirmed) >= 2:
-            # Rel path — use the one from the first label that has it
-            rel = present_in[label_list[0]]["rel_path"]
-            duplicate_groups.append({
-                "rel_path": rel,
-                "name_orig": present_in[label_list[0]]["name_orig"],
-                "size": size,
-                "matches": confirmed,
-                "confidence": confidence,
-            })
-
-    # ── version divergence ────────────────────────────────────────
+    # Build lookup for folder tree renderer (Task 6):
+    # (name_lower, folder_str) → {content_match, version_status, conflict_index}
+    _file_classifications = {}
+    for i, g in enumerate(conflict_groups):
+        rp = Path(g["rel_path"])
+        folder = str(rp.parent) if str(rp.parent) != "." else "(root)"
+        _file_classifications[(g["name_orig"].lower(), folder)] = {
+            "content_match":  g["content_match"],
+            "version_status": g["version_status"],
+            "conflict_index": i,
+        }
     for g in duplicate_groups:
-        mtimes = {label: rec["mtime"] for label, rec in g["matches"].items()}
-        max_mt = max(mtimes.values())
-        min_mt = min(mtimes.values())
-        diff_days = (max_mt - min_mt) / 86400
-        if diff_days * 86400 > mtime_fuzz:
-            newest_label = max(mtimes, key=mtimes.get)
-            g["version_status"] = "diverged"
-            g["newest_in"] = newest_label
-            g["newest_mtime"] = max_mt
-            g["age_difference_days"] = round(diff_days, 2)
-            g["copy_mtimes"] = {l: fmt_ts(t) for l, t in mtimes.items()}
-        else:
-            g["version_status"] = "same"
-            g["newest_in"] = None
-            g["age_difference_days"] = 0.0
-            g["copy_mtimes"] = {l: fmt_ts(t) for l, t in mtimes.items()}
+        rp = Path(g["rel_path"])
+        folder = str(rp.parent) if str(rp.parent) != "." else "(root)"
+        key = (g["name_orig"].lower(), folder)
+        if key not in _file_classifications:
+            _file_classifications[key] = {
+                "content_match":  g["content_match"],
+                "version_status": g["version_status"],
+                "conflict_index": None,
+            }
 
     # ── pairwise duplicate counts ─────────────────────────────────
     pairwise_counts = {}
@@ -298,7 +339,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
 
     # ── unique files per service ──────────────────────────────────
     dup_rel_paths = defaultdict(set)
-    for g in duplicate_groups:
+    for g in duplicate_groups + conflict_groups:
         for label in g["matches"]:
             dup_rel_paths[label].add(g["rel_path"].lower())
 
@@ -389,6 +430,9 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         "dirs": {label: str(path) for label, path in dirs},
         "total_files": {label: len(recs) for label, recs in scanned.items()},
         "duplicate_groups": duplicate_groups,
+        "conflict_groups":        conflict_groups,
+        "_file_classifications":  _file_classifications,
+        "_scanned_records":       {label: scanned[label] for label in labels},
         "unique_counts": unique_counts,
         "pairwise_counts": {f"{la}↔{lb}": v for (la, lb), v in pairwise_counts.items()},
         "all_services_count": all_three_count,
@@ -508,7 +552,7 @@ Comparing {n} directories</p>
             row_cls = ' class="warn-row"' if g["version_status"] == "diverged" else ""
             found_in = ", ".join(g["matches"].keys())
             version_cell = badge("diverged") if g["version_status"] == "diverged" else badge("same")
-            match_cell = badge(g["confidence"])
+            match_cell = badge(g.get("content_match", g.get("confidence", "")))
             # folder = parent of rel_path
             rp = Path(g["rel_path"])
             folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
@@ -533,8 +577,12 @@ Comparing {n} directories</p>
         for g in sorted(divs, key=lambda x: -x["age_difference_days"]):
             rp = Path(g["rel_path"])
             folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
+            copy_mtimes = (
+                g["copy_mtimes"] if "copy_mtimes" in g
+                else {l: sd["mtime"] for l, sd in g.get("service_details", {}).items()}
+            )
             copy_dates = "<br>".join(
-                f'{html.escape(l)}: {t}' for l, t in g["copy_mtimes"].items())
+                f'{html.escape(l)}: {t}' for l, t in copy_mtimes.items())
             parts.append(f'<tr class="warn-row">'
                          f'<td><strong>{html.escape(g["name_orig"])}</strong></td>'
                          f'<td><code>{html.escape(folder_str)}</code></td>'
