@@ -170,13 +170,17 @@ def classify_pair(a: dict, b: dict, mtime_fuzz: float, use_checksum: bool):
 
     'phantom' means mtime agrees but MD5 differs — the most dangerous case:
     the file looks like a safe duplicate but the content is actually different.
+
+    Empty files (size == 0) are always classified ("identical", "same") regardless
+    of mtime. There is no content to version, so mtime differences on empty files
+    are always sync artifacts rather than meaningful edits.
     """
     if a["name"] != b["name"] or a["size"] != b["size"]:
         return None
 
     mtime_same = abs(a["mtime"] - b["mtime"]) <= mtime_fuzz
 
-    # Empty files have no content to hash; treat as identical regardless of mtime.
+    # Empty files: no content to version; mtime differences are always sync artifacts.
     if a["size"] == 0:
         return ("identical", "same")
 
@@ -193,6 +197,7 @@ def classify_pair(a: dict, b: dict, mtime_fuzz: float, use_checksum: bool):
     if hash_a == hash_b:
         return ("identical", "same" if mtime_same else "diverged")
     else:
+        # 'phantom': content differs despite matching timestamps — keep both copies.
         return ("different", "phantom" if mtime_same else "diverged")
 
 
