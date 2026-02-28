@@ -1,5 +1,7 @@
 # cloud-dedup
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Scans two or more directories and produces an HTML report identifying duplicate files across them — designed for comparing cloud storage sync folders (Google Drive, Dropbox, OneDrive, etc.).
 
 ## Features
