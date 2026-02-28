@@ -100,7 +100,72 @@ class TestClassifyPair(unittest.TestCase):
 
 
 class TestSubtreeRollup(unittest.TestCase):
-    pass  # populated in Task 4
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil; shutil.rmtree(self.tmp)
+
+    def _run_tree(self, structure_a, structure_b):
+        """structure: list of (rel_path, content_bytes, mtime)"""
+        dir_a = Path(self.tmp) / "a"
+        dir_b = Path(self.tmp) / "b"
+        for rel, content, mtime in structure_a:
+            make_file(dir_a, rel, content, mtime)
+        for rel, content, mtime in structure_b:
+            make_file(dir_b, rel, content, mtime)
+        return cda.analyze(
+            [("A", dir_a), ("B", dir_b)],
+            mtime_fuzz=5.0, use_checksum=True, skip_hidden=True,
+        )
+
+    def test_fully_identical_subtree_detected(self):
+        r = self._run_tree(
+            [("photos/2020/jan.jpg", b"img1", 1000.0),
+             ("photos/2020/feb.jpg", b"img2", 1000.0),
+             ("photos/2021/mar.jpg", b"img3", 1000.0)],
+            [("photos/2020/jan.jpg", b"img1", 1000.0),
+             ("photos/2020/feb.jpg", b"img2", 1000.0),
+             ("photos/2021/mar.jpg", b"img3", 1000.0)],
+        )
+        fc_by_path = {fc["folder_path"]: fc for fc in r["folder_comparisons"]}
+        self.assertIn("photos", fc_by_path)
+        self.assertEqual(fc_by_path["photos"]["subtree_status"], "identical")
+        safe_paths = [s["folder_path"] for s in r["safe_to_delete_roots"]]
+        self.assertIn("photos", safe_paths)
+
+    def test_partial_subtree_not_in_safe_roots(self):
+        r = self._run_tree(
+            [("docs/work/a.txt",      b"aaa", 1000.0),
+             ("docs/personal/b.txt",  b"bbb", 1000.0)],
+            [("docs/work/a.txt",      b"aaa", 1000.0),
+             ("docs/personal/c.txt",  b"ccc", 1000.0)],  # different file in personal
+        )
+        safe_paths = [s["folder_path"] for s in r["safe_to_delete_roots"]]
+        self.assertNotIn("docs", safe_paths)
+
+    def test_safe_root_is_highest_level_only(self):
+        """When photos/ is fully identical, photos/2020/ should NOT also appear in safe_roots."""
+        r = self._run_tree(
+            [("photos/2020/jan.jpg", b"img1", 1000.0)],
+            [("photos/2020/jan.jpg", b"img1", 1000.0)],
+        )
+        safe_paths = [s["folder_path"] for s in r["safe_to_delete_roots"]]
+        self.assertIn("photos", safe_paths)
+        self.assertNotIn("photos/2020", safe_paths)
+
+    def test_subtree_total_files_counts_all_descendants(self):
+        r = self._run_tree(
+            [("photos/2020/jan.jpg", b"img1", 1000.0),
+             ("photos/2020/feb.jpg", b"img2", 1000.0),
+             ("photos/2021/mar.jpg", b"img3", 1000.0)],
+            [("photos/2020/jan.jpg", b"img1", 1000.0),
+             ("photos/2020/feb.jpg", b"img2", 1000.0),
+             ("photos/2021/mar.jpg", b"img3", 1000.0)],
+        )
+        fc_by_path = {fc["folder_path"]: fc for fc in r["folder_comparisons"]}
+        # photos/ has 0 files directly; 2 in 2020/ and 1 in 2021/ = 3 total in subtree
+        self.assertEqual(fc_by_path["photos"]["subtree_total_files"], 3)
 
 
 class TestAnalyzeIntegration(unittest.TestCase):

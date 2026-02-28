@@ -364,12 +364,30 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
     for fd in folder_sets.values():
         all_folders.update(fd.keys())
 
+    # Also add all ancestor directories so that intermediate parent folders
+    # (which contain no files directly) appear in folder_comparisons and
+    # can participate in subtree rollup.
+    for folder in list(all_folders):
+        parts = folder.replace("\\", "/").split("/")
+        for depth in range(1, len(parts)):
+            parent = "/".join(parts[:depth])
+            if parent and parent != ".":
+                all_folders.add(parent)
+
     folder_comparisons = []
     for folder in sorted(all_folders):
-        present = [l for l in labels if folder in folder_sets[l]]
+        # A label is "present" in a folder if it has files directly there OR
+        # has files in any descendant directory.
+        def label_has_presence(label, folder):
+            if folder in folder_sets[label]:
+                return True
+            prefix = folder + "/"
+            return any(f.startswith(prefix) for f in folder_sets[label])
+        present = [l for l in labels if label_has_presence(l, folder)]
         if len(present) < 2:
             continue
-        sets_here = {l: folder_sets[l][folder] for l in present}
+        # For file-set comparisons at this level, only use files directly here.
+        sets_here = {l: folder_sets[l].get(folder, set()) for l in present}
 
         # Determine relationship
         sets_list = list(sets_here.values())
@@ -425,6 +443,47 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
     for fc in folder_comparisons:
         rel_counts[fc["relationship"]] += 1
 
+    # ── subtree rollups ───────────────────────────────────────────
+    fc_by_path = {fc["folder_path"]: fc for fc in folder_comparisons}
+    all_fc_paths = set(fc_by_path.keys())
+
+    for fc in folder_comparisons:
+        path = fc["folder_path"]
+        # Descendants = self + any fc whose path starts with path + "/"
+        if path == "(root)":
+            descendants = list(fc_by_path.values())
+        else:
+            descendants = [
+                fc_by_path[p] for p in all_fc_paths
+                if p == path or p.startswith(path + "/")
+            ]
+
+        all_identical = all(d["relationship"] == "identical" for d in descendants)
+        any_overlap   = any(d["relationship"] == "overlap"   for d in descendants)
+
+        if all_identical:
+            fc["subtree_status"] = "identical"
+        elif any_overlap:
+            fc["subtree_status"] = "overlap"
+        else:
+            fc["subtree_status"] = "partial"
+
+        fc["subtree_total_files"] = sum(d["total_unique_files"] for d in descendants)
+
+    # ── safe-to-delete roots ──────────────────────────────────────
+    # Highest-level folders whose entire subtree is identical.
+    # Exclude folders whose ancestor is also an identical-subtree root.
+    identical_fcs = [fc for fc in folder_comparisons if fc["subtree_status"] == "identical"]
+    safe_to_delete_roots = []
+    for fc in identical_fcs:
+        path = fc["folder_path"]
+        has_identical_ancestor = any(
+            path != other["folder_path"] and path.startswith(other["folder_path"] + "/")
+            for other in identical_fcs
+        )
+        if not has_identical_ancestor:
+            safe_to_delete_roots.append(fc)
+
     return {
         "labels": labels,
         "dirs": {label: str(path) for label, path in dirs},
@@ -438,6 +497,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         "all_services_count": all_three_count,
         "folder_comparisons": folder_comparisons,
         "relationship_counts": dict(rel_counts),
+        "safe_to_delete_roots": safe_to_delete_roots,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
