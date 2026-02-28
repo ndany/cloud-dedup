@@ -159,28 +159,41 @@ def build_name_size_index(records: list[dict]) -> dict:
     return idx
 
 
-def files_match(a: dict, b: dict, mtime_fuzz: float, use_checksum: bool) -> str:
+def classify_pair(a: dict, b: dict, mtime_fuzz: float, use_checksum: bool):
     """
-    Return match confidence: 'exact', 'likely', or '' (no match).
-    'exact'  — name + size + mtime agree (or MD5 confirms)
-    'likely' — name + size agree; mtime differs but checksum matches (or
-               checksum skipped and sizes are non-zero equal)
-    ''       — no match
+    Compare two file records that share the same (name, size) index key.
+
+    Returns (content_match, version_status) or None if name/size don't match.
+
+      content_match : 'identical' | 'different' | 'unverified'
+      version_status: 'same'      | 'diverged'  | 'phantom'
+
+    'phantom' means mtime agrees but MD5 differs — the most dangerous case:
+    the file looks like a safe duplicate but the content is actually different.
     """
-    if a["name"] != b["name"]:
-        return ""
-    if a["size"] == b["size"]:
-        if abs(a["mtime"] - b["mtime"]) <= mtime_fuzz:
-            return "exact"
-        # Same name+size but different mtime — try checksum
-        if use_checksum and a["size"] > 0:
-            if md5(a["full_path"]) == md5(b["full_path"]):
-                return "likely"
-        elif a["size"] == 0:
-            return "exact"
-        else:
-            return "likely"   # same name+size, no checksum, treat as likely
-    return ""
+    if a["name"] != b["name"] or a["size"] != b["size"]:
+        return None
+
+    mtime_same = abs(a["mtime"] - b["mtime"]) <= mtime_fuzz
+
+    # Empty files have no content to hash; treat as identical regardless of mtime.
+    if a["size"] == 0:
+        return ("identical", "same")
+
+    if not use_checksum:
+        return ("unverified", "same" if mtime_same else "diverged")
+
+    hash_a = md5(a["full_path"])
+    hash_b = md5(b["full_path"])
+
+    if not hash_a or not hash_b:
+        # Hash failed (permission error etc.) — fall back to mtime only.
+        return ("unverified", "same" if mtime_same else "diverged")
+
+    if hash_a == hash_b:
+        return ("identical", "same" if mtime_same else "diverged")
+    else:
+        return ("different", "phantom" if mtime_same else "diverged")
 
 
 # ─────────────────────────────────────────────────────── core analysis ──
@@ -232,10 +245,10 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         confirmed = {}
         confidence = "exact"
         for la, lb in combinations(label_list, 2):
-            c = files_match(present_in[la], present_in[lb], mtime_fuzz, use_checksum)
-            if not c:
+            c = classify_pair(present_in[la], present_in[lb], mtime_fuzz, use_checksum)
+            if c is None or c[0] == "different":
                 break
-            if c == "likely":
+            if c[0] == "unverified":
                 confidence = "likely"
         else:
             for label in present_in:
