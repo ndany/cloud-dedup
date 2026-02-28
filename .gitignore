@@ -1,0 +1,22 @@
+# Generated reports — exclude all contents recursively, keep the directory
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
