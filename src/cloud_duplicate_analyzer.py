@@ -849,50 +849,63 @@ Comparing {n} directories</p>
 
     parts.append(
         '<table>'
-        '<tr><th>Service Pair</th><th>Match Type</th><th>Version Status</th><th>Total</th></tr>'
+        '<tr>'
+        '<th>Service Pair</th>'
+        '<th style="background:#c8e6c9;border-left:3px solid #81c784">Match Type</th>'
+        '<th style="background:#bbdefb;border-left:3px solid #64b5f6">Version Status</th>'
+        '<th>Total</th>'
+        '</tr>'
     )
+    _B = 'display:inline-block;padding:2px 8px;border-radius:10px;white-space:nowrap;font-size:12px'
     for pair_key, ps in pair_stats.items():
         match_parts = []
         if ps["identical"]:
             match_parts.append(
-                f'<span style="color:#28a745;font-weight:bold">{ps["identical"]:,} identical</span>'
+                f'<span style="{_B};background:#d4edda;color:#155724;font-weight:bold">{ps["identical"]:,} identical</span>'
             )
         if ps["unverified"]:
             match_parts.append(
-                f'<span style="color:#888">{ps["unverified"]:,} unverified</span>'
+                f'<span style="{_B};background:#e9ecef;color:#495057">{ps["unverified"]:,} unverified</span>'
             )
         if ps["different"]:
             match_parts.append(
-                f'<span style="color:#dc3545;font-weight:bold">{ps["different"]:,} different</span>'
+                f'<span style="{_B};background:#f8d7da;color:#721c24;font-weight:bold">{ps["different"]:,} different</span>'
             )
         if not match_parts:
             match_parts.append('<span style="color:#aaa">—</span>')
 
         version_parts = []
-        if ps["diverged"]:
-            version_parts.append(
-                f'<span style="color:#0069c0">{ps["diverged"]:,} diverged</span>'
-            )
         if ps["phantom"]:
             version_parts.append(
-                f'<span style="color:#dc3545">{ps["phantom"]:,} phantom</span>'
+                f'<span style="{_B};background:#fff3cd;color:#856404;font-weight:bold">{ps["phantom"]:,} phantom</span>'
+            )
+        if ps["diverged"]:
+            version_parts.append(
+                f'<span style="{_B};background:#dbeafe;color:#1e40af">{ps["diverged"]:,} diverged</span>'
             )
         if ps["conflict"]:
             version_parts.append(
-                f'<span style="color:#6f42c1">{ps["conflict"]:,} mixed-type</span>'
+                f'<span style="{_B};background:#ede9fe;color:#6d28d9">{ps["conflict"]:,} mixed-type</span>'
             )
         if ps["same"]:
             version_parts.append(
-                f'<span style="color:#888">{ps["same"]:,} same</span>'
+                f'<span style="{_B};background:#f1f3f5;color:#6c757d">{ps["same"]:,} same</span>'
             )
         if not version_parts:
             version_parts.append('<span style="color:#aaa">—</span>')
 
+        row_bg = (
+            '#fff8e1' if ps["phantom"] > 0 else
+            '#fdf0f8' if ps["conflict"] > 0 else
+            '#eff6ff' if ps["diverged"] > 0 else
+            ''
+        )
+        row_style = f' style="background:{row_bg}"' if row_bg else ''
         parts.append(
-            f'<tr>'
+            f'<tr{row_style}>'
             f'<td>{html.escape(pair_key)}</td>'
-            f'<td>{" &nbsp;|&nbsp; ".join(match_parts)}</td>'
-            f'<td>{" &nbsp;|&nbsp; ".join(version_parts)}</td>'
+            f'<td style="border-left:3px solid #81c784">{" ".join(match_parts)}</td>'
+            f'<td style="border-left:3px solid #64b5f6">{" ".join(version_parts)}</td>'
             f'<td>{ps["total"]:,}</td>'
             f'</tr>'
         )
@@ -900,7 +913,7 @@ Comparing {n} directories</p>
     if n > 2:
         parts.append(
             f'<tr><td><strong>All {n} services</strong></td>'
-            f'<td colspan="2"><em>(pairwise breakdown only)</em></td>'
+            f'<td colspan="2" style="border-left:3px solid #81c784"><em>(pairwise breakdown only)</em></td>'
             f'<td><strong>{result["all_services_count"]:,}</strong></td></tr>'
         )
 
@@ -1068,8 +1081,9 @@ Comparing {n} directories</p>
         )
     else:
         parts.append(
-            "<p>Each subtree below is 100% identical across all copies. "
-            "Deleting from any one service is safe.</p>"
+            "<p>Each subtree below has identical content in every service that contains it (✓). "
+            "Services marked — do not have this folder at all. "
+            "Deleting from any ✓ service is safe as long as at least one other ✓ service retains a copy.</p>"
         )
         svc_hdrs = "".join(f'<th>{html.escape(l)}</th>' for l in labels)
         parts.append(
@@ -1258,25 +1272,44 @@ Comparing {n} directories</p>
         parts.append(f'<h3>Version-Diverged Files ({len(divs)})</h3>')
         parts.append(
             '<p>These files have identical (or unverified) content across services but different '
-            'modification timestamps (beyond the mtime tolerance). The copy with the newest '
-            'timestamp is shown. Safe to delete older copies once content is confirmed.</p>'
+            'modification timestamps (beyond the mtime tolerance). '
+            'Safe to delete older copies once content is confirmed.</p>'
         )
+        div_svc_hdrs = "".join(f'<th>{html.escape(l)}</th>' for l in labels)
         parts.append(
             '<table><tr><th>File</th><th>Folder</th><th>Size</th>'
-            '<th>Found in</th><th>Newest in</th></tr>'
+            f'<th>Found in</th><th>Newest in</th><th>Age gap (days)</th>{div_svc_hdrs}</tr>'
         )
         for g in sorted(divs, key=lambda x: x["rel_path"]):
             found_in = ", ".join(g["matches"].keys())
             rp = Path(g["rel_path"])
             folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
             newest = html.escape(g.get("newest_in") or "—")
+            age_str = f'{(g.get("age_difference_days") or 0):.1f}'
+            date_cells = ""
+            for l in labels:
+                match_rec = g["matches"].get(l)
+                if match_rec and match_rec.get("mtime"):
+                    dt_str = datetime.fromtimestamp(
+                        match_rec["mtime"], tz=timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M")
+                    is_newest = l == g.get("newest_in")
+                    star = " ★" if is_newest else ""
+                    fw = "font-weight:bold;" if is_newest else ""
+                    date_cells += (
+                        f'<td style="white-space:nowrap;font-size:12px;{fw}">{dt_str}{star}</td>'
+                    )
+                else:
+                    date_cells += '<td style="color:#aaa">—</td>'
             parts.append(
-                f'<tr>'
+                f'<tr style="background:#fffde7">'
                 f'<td>{html.escape(g["name_orig"])}</td>'
                 f'<td><code>{html.escape(folder_str)}</code></td>'
                 f'<td style="white-space:nowrap">{human_size(g["size"])}</td>'
                 f'<td>{html.escape(found_in)}</td>'
                 f'<td><strong>{newest}</strong></td>'
+                f'<td style="text-align:center">{age_str}</td>'
+                f'{date_cells}'
                 f'</tr>'
             )
         parts.append('</table>')
