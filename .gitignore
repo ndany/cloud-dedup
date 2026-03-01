@@ -1,5 +1,6 @@
 # Generated reports — exclude all contents recursively, keep the directory
 output/
+docs/security/audits/
 
 # Python
 __pycache__/

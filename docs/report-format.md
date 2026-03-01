@@ -5,6 +5,18 @@ Each run of `cloud_duplicate_analyzer.py` produces two output files with the sam
 - `<output>.html` — Visual report, open in any browser
 - `<output>.json` — Raw structured data
 
+## Symbol Legend
+
+| Symbol | Meaning |
+|---|---|
+| ★ | Identical file/folder across all services |
+| ✓ | Identical content, different modification time (diverged) |
+| ⚠ | Different content, different modification time |
+| ⚡ | Different content, same modification time (phantom — dangerous false positive) |
+| ◆ | Unique to one service |
+| ↪ | Symlink (file-type only; compared by target path) |
+| ↪⚠ | Symlink in one service, regular file in another (mixed-type conflict) |
+
 ## HTML Report
 
 The HTML report has five sections.
@@ -19,9 +31,36 @@ A table showing pairwise duplicate counts (e.g. how many files appear in both Go
 
 Also shows the number of files that are **unique** to each service (i.e. not duplicated anywhere).
 
-### Section 3: Duplicate Files
+### Section 3: Folder Structure Analysis
 
-A row per confirmed duplicate group. Columns:
+Two parts:
+
+- **Part 1 — Fully duplicated subtrees** panel: a table listing each `safe_to_delete_roots` entry with a per-service ✓ or — column and a total file count for the subtree. Only shown when at least one fully-identical subtree exists.
+
+- **Part 2 — Folder tree**: collapsible `<details>`/`<summary>` nodes. Each node shows the subtree status symbol (★ = identical subtree, ~ = partially duplicated, ✗ = has conflicts), per-folder file counts, and file-level detail within each expanded folder. Files shared across services are listed under "Shared across services" and annotated with ★/✓/⚠/⚡ per their match status; ⚠ and ⚡ files link to Section 4. Files unique to one service are listed under "Only in &lt;service&gt;" with a → marker.
+
+### Section 4: Files Requiring Action
+
+Files that share a name across services but require manual review before deletion. This includes:
+
+- Files with `content_match = "different"` — same name and size but differing MD5 checksums.
+- Symlinks with `version_status = "target_diverged"` — both services have a symlink at the same path but pointing to different targets (symbol: ↪⚠).
+- Mixed-type entries with `content_match = "mixed_type"` — one service has a regular file, another has a symlink at the same name (symbol: ↪⚠).
+
+Sorted by age gap (largest first). Columns:
+
+| Column | Description |
+|---|---|
+| File | Filename |
+| Folder | Relative folder path |
+| Status | `different · diverged`, `different · phantom`, or `mixed_type · target_diverged` |
+| Per-service columns | Size and modification timestamp for each service |
+
+### Section 5: Duplicate Files
+
+Two subsections:
+
+**Duplicate Files** — A row per confirmed duplicate group (files with `content_match = identical` or `unverified`). Columns:
 
 | Column | Description |
 |---|---|
@@ -29,28 +68,17 @@ A row per confirmed duplicate group. Columns:
 | Folder | Relative folder path within the directory |
 | Size | Human-readable file size |
 | Found in | Which services contain this file |
-| Match | `exact` or `likely` — see [how-it-works.md](how-it-works.md) |
-| Version | `same` (timestamps agree) or `diverged` (timestamps differ — row highlighted yellow) |
+| Match | Combined `content_match · version_status` badge, e.g. `identical · same`, `identical · diverged`, `unverified · same` |
 
-### Section 4: Version-Diverged Files
+**Symlinks** — A row per symlink pair where both services agree on the resolved target. Each row shows the symlink name, relative folder, the resolved target path, and which services contain it. Annotated with the ↪ symbol. Dangling symlinks (no resolved target) are shown with a `—` in the Target column.
 
-A filtered view showing only the files from Section 3 where version status is `diverged`. Sorted by age gap (largest first). Columns:
+---
 
-| Column | Description |
-|---|---|
-| File | Filename |
-| Path | Relative folder path |
-| Newest version in | Which service holds the most recently modified copy |
-| Age gap (days) | Days between the oldest and newest copy |
-| Copy dates | Modification timestamp of each copy |
+## Report Confidentiality
 
-### Section 5: Folder Structure Analysis
+Reports contain complete file paths, directory structures, and file metadata from your compared directories. **Do not share reports publicly or with untrusted parties** without first reviewing the content. Paths may reveal information about your system organization, project structure, or personally-identifiable information.
 
-Stat cards showing counts of identical / subset-superset / overlap folders, then three sub-tables:
-
-- **Identical folders** — folder path, services present, file count
-- **Subset/superset folders** — which service has extra files and how many
-- **Overlapping folders** — for each service, what files are exclusive to it
+If you need to share the report with others, consider redacting sensitive paths or filename patterns first.
 
 ---
 
@@ -76,17 +104,27 @@ Stat cards showing counts of identical / subset-superset / overlap folders, then
       "size": 990208,
       "matches": {
         "Google Drive": { "rel_path": "...", "name": "...", "size": 990208, "mtime": 1234567890.0 },
-        "Dropbox":      { ... },
-        "OneDrive":     { ... }
+        "Dropbox":      { "..." : "..." },
+        "OneDrive":     { "..." : "..." }
       },
-      "confidence": "exact",
+      "content_match": "identical",
       "version_status": "same",
       "newest_in": null,
-      "age_difference_days": 0.0,
-      "copy_mtimes": {
-        "Google Drive": "2021-03-15 18:42 UTC",
-        "Dropbox":      "2021-03-15 18:42 UTC",
-        "OneDrive":     "2021-03-15 18:42 UTC"
+      "age_difference_days": 0.0
+    }
+  ],
+  "conflict_groups": [
+    {
+      "rel_path": "Documents/budget.xlsx",
+      "name_orig": "budget.xlsx",
+      "size": 24576,
+      "content_match": "different",
+      "version_status": "diverged",
+      "newest_in": "Dropbox",
+      "age_difference_days": 3.2,
+      "service_details": {
+        "Google Drive": { "size": 24576, "mtime": "2009-02-13 23:30 UTC", "mtime_raw": 1234567800.0 },
+        "Dropbox":      { "size": 24576, "mtime": "2009-02-16 07:43 UTC", "mtime_raw": 1234844600.0 }
       }
     }
   ],
@@ -116,6 +154,13 @@ Stat cards showing counts of identical / subset-superset / overlap folders, then
       }
     }
   ],
+  "safe_to_delete_roots": [
+    {
+      "folder_path": "Photos/2020",
+      "subtree_status": "identical",
+      "subtree_total_files": 42
+    }
+  ],
   "relationship_counts": {
     "identical": 48,
     "overlap": 6,
@@ -126,16 +171,35 @@ Stat cards showing counts of identical / subset-superset / overlap folders, then
 }
 ```
 
-### `duplicate_groups[].confidence`
+### `duplicate_groups[].content_match` and `duplicate_groups[].version_status`
+
+The `confidence` field from earlier versions has been replaced by two independent fields:
+
+**`content_match`**
 
 | Value | Meaning |
 |---|---|
-| `exact` | Name + size + mtime all agree (or MD5 confirmed) |
-| `likely` | Name + size agree; mtime differs but MD5 matches (or checksums skipped) |
+| `identical` | MD5 checksums confirmed the file content matches across services |
+| `unverified` | `--no-checksum` was used; name + size agree but content was not verified |
 
-### `duplicate_groups[].version_status`
+**`version_status`**
 
 | Value | Meaning |
 |---|---|
 | `same` | All copies have mtimes within the fuzz window |
 | `diverged` | At least one copy has a mtime more than `mtime_fuzz` seconds away from another |
+
+### `conflict_groups`
+
+Array of file groups where `content_match = "different"` — files that share a name and size but have differing MD5 checksums. These are separated from `duplicate_groups` because they require manual review before any deletion.
+
+Each entry mirrors the shape of `duplicate_groups` entries but includes `service_details` with per-service `size`, `mtime` (formatted string, e.g. `"2024-01-15 10:00 UTC"`), and `mtime_raw` (Unix timestamp float) fields, and always has `content_match = "different"`.
+
+| `version_status` value | Meaning |
+|---|---|
+| `diverged` | Content differs and timestamps also differ — keep the newer copy |
+| `phantom` | Content differs despite matching timestamps — keep both copies |
+
+### `safe_to_delete_roots`
+
+Array of folder paths whose entire subtree (all descendant folders) is classified `identical` across all compared services. These are the highest-level folders safe to delete — subfolders are omitted since they are already covered by their ancestor.
