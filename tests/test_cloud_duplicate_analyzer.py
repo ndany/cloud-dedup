@@ -305,6 +305,56 @@ class TestSymlinkDetection(unittest.TestCase):
         assert regular_record is not None
         assert regular_record.get("is_symlink") == False
 
+    def test_symlink_identical_targets(self):
+        """Two symlinks pointing to same target are identical."""
+        target = make_file(self.tmp, "target/file.txt", b"target content")
+
+        rec_a = {
+            "name": "link.txt", "name_orig": "link.txt",
+            "is_symlink": True, "symlink_target": str(target),
+            "folder": "a", "size": -1, "mtime": 0.0
+        }
+        rec_b = {
+            "name": "link.txt", "name_orig": "link.txt",
+            "is_symlink": True, "symlink_target": str(target),
+            "folder": "b", "size": -1, "mtime": 0.0
+        }
+
+        result = cda.classify_pair(rec_a, rec_b, mtime_fuzz=5.0, use_checksum=True)
+        self.assertEqual(result, ("symlink", "target_identical"))
+
+    def test_symlink_diverged_targets(self):
+        """Two symlinks pointing to different targets diverge."""
+        rec_a = {
+            "name": "link.txt", "name_orig": "link.txt",
+            "is_symlink": True, "symlink_target": "/path/to/target1",
+            "folder": "a", "size": -1, "mtime": 0.0
+        }
+        rec_b = {
+            "name": "link.txt", "name_orig": "link.txt",
+            "is_symlink": True, "symlink_target": "/path/to/target2",
+            "folder": "b", "size": -1, "mtime": 0.0
+        }
+
+        result = cda.classify_pair(rec_a, rec_b, mtime_fuzz=5.0, use_checksum=True)
+        self.assertEqual(result, ("symlink", "target_diverged"))
+
+    def test_symlink_vs_file_conflict(self):
+        """Symlink in one service, regular file in another = conflict."""
+        rec_symlink = {
+            "name": "item.txt", "name_orig": "item.txt",
+            "is_symlink": True, "symlink_target": "/path/to/target",
+            "folder": "a", "size": -1, "mtime": 0.0
+        }
+        rec_file = {
+            "name": "item.txt", "name_orig": "item.txt",
+            "is_symlink": False, "size": 100, "mtime": 1000.0,
+            "folder": "b"
+        }
+
+        result = cda.classify_pair(rec_symlink, rec_file, mtime_fuzz=5.0, use_checksum=True)
+        self.assertEqual(result, ("mixed_type", "conflict"))
+
 
 if __name__ == "__main__":
     unittest.main()
