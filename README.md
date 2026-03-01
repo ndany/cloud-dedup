@@ -114,7 +114,7 @@ Each run produces two files side-by-side:
 The HTML report has five sections:
 
 1. **File Counts** — how many files are in each directory
-2. **Duplicate File Summary** — per-pair counts of identical/different/unverified files, with version status (same/diverged/phantom) breakdown
+2. **Duplicate File Summary** — per-pair counts of identical/different/unverified files, with version status (same/diverged/phantom/mixed-type) breakdown
 3. **Folder Structure Analysis** — collapsible folder tree with per-folder file status, plus a safe-to-delete subtree panel
 4. **Files Requiring Action** — files with different content across services that need manual review before deletion
 5. **Duplicate Files** — confirmed duplicates with size, match status, version status; includes symlinks and version-diverged files subsections
