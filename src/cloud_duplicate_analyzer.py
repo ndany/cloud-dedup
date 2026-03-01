@@ -311,7 +311,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         # Precedence: different > unverified > identical
         # version precedence: phantom > diverged > same
         content_rank = {"identical": 0, "unverified": 1, "different": 2}
-        version_rank = {"same": 0, "diverged": 1, "phantom": 2}
+        version_rank = {"same": 0, "diverged": 1, "phantom": 2, "conflict": 3}
         group_content = "identical"
         group_version = "same"
         all_matched = True
