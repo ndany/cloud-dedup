@@ -787,7 +787,8 @@ def render_html(result: dict) -> str:
     labels = result["labels"]
     n = len(labels)
     dups = result["duplicate_groups"]
-    divs = [g for g in dups if g["version_status"] == "diverged"]
+    divs = [g for g in dups if g["version_status"] == "diverged"
+            and g["content_match"] in ("identical", "unverified")]
     total = sum(result["total_files"].values())
 
     parts = [f"""<!DOCTYPE html>
@@ -1252,7 +1253,33 @@ Comparing {n} directories</p>
             )
         parts.append('</table>')
 
-    # (added in Task 3)
+    # Version-Diverged Files subsection
+    if divs:
+        parts.append(f'<h3>Version-Diverged Files ({len(divs)})</h3>')
+        parts.append(
+            '<p>These files have identical content across services but different modification '
+            'timestamps (beyond the mtime tolerance). The copy with the newest timestamp is '
+            'shown. Safe to delete older copies — content is confirmed identical.</p>'
+        )
+        parts.append(
+            '<table><tr><th>File</th><th>Folder</th><th>Size</th>'
+            '<th>Found in</th><th>Newest in</th></tr>'
+        )
+        for g in sorted(divs, key=lambda x: x["rel_path"]):
+            found_in = ", ".join(g["matches"].keys())
+            rp = Path(g["rel_path"])
+            folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
+            newest = html.escape(g.get("newest_in") or "—")
+            parts.append(
+                f'<tr>'
+                f'<td>{html.escape(g["name_orig"])}</td>'
+                f'<td><code>{html.escape(folder_str)}</code></td>'
+                f'<td style="white-space:nowrap">{human_size(g["size"])}</td>'
+                f'<td>{html.escape(found_in)}</td>'
+                f'<td><strong>{newest}</strong></td>'
+                f'</tr>'
+            )
+        parts.append('</table>')
 
     # ── footer ──
     parts.append(f'<div class="footer">Cloud Storage Duplicate Analysis · '
