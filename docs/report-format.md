@@ -5,6 +5,24 @@ Each run of `cloud_duplicate_analyzer.py` produces two output files with the sam
 - `<output>.html` — Visual report, open in any browser
 - `<output>.json` — Raw structured data
 
+## Color Scheme
+
+All badge pills and status indicators in the report follow a consistent semantic color scheme:
+
+| Color | Values | Meaning |
+|---|---|---|
+| **Green** | `identical`, `same` | Safe to delete — content confirmed identical and timestamps agree |
+| **Amber** | `diverged`, `unverified`, `symlink` | Requires review — content may match but needs verification or a decision |
+| **Red** | `different`, `phantom`, `conflict` / mixed-type | Not safe to delete — content differs or conflict cannot be resolved automatically |
+
+Row highlighting uses the same scheme with lighter background tints:
+- Red/phantom/conflict rows → light red background
+- Amber/diverged rows → light amber background
+
+This applies consistently across all sections: Section 2 badge pills, Section 5 Match and Version badges, and any future status indicators added to the report.
+
+---
+
 ## Symbol Legend
 
 | Symbol | Meaning |
@@ -27,17 +45,24 @@ A stat grid showing the number of files in each directory and its percentage of 
 
 ### Section 2: Duplicate File Summary
 
-A table showing pairwise duplicate counts (e.g. how many files appear in both Google Drive and Dropbox) and, when three or more directories are compared, the count of files present in all services simultaneously.
+A table showing per-pair match and version breakdowns across all compared service pairs:
 
-Also shows the number of files that are **unique** to each service (i.e. not duplicated anywhere).
+| Column | Description |
+|---|---|
+| Service Pair | The two services being compared (e.g. `Google Drive↔Dropbox`) |
+| Match Type | Color-coded counts: **identical** (green), **different** (red), **unverified** (amber) |
+| Version Status | Color-coded counts: **same** (green), **diverged** (amber), **phantom** (red), **mixed-type** (red) |
+| Total | All files shared between the pair (duplicates + conflicts) |
+
+Also shows per-service unique file counts (files not duplicated anywhere).
 
 ### Section 3: Folder Structure Analysis
 
 Two parts:
 
-- **Part 1 — Fully duplicated subtrees** panel: a table listing each `safe_to_delete_roots` entry with a per-service ✓ or — column and a total file count for the subtree. Only shown when at least one fully-identical subtree exists.
+- **Part 1 — Folder tree**: collapsible `<details>`/`<summary>` nodes. Each node shows the subtree status symbol (★ = identical subtree, ~ = partially duplicated, ✗ = has conflicts), per-folder file counts, and file-level detail within each expanded folder. Files shared across services are listed under "Shared across services" and annotated with ★/✓/⚠/⚡ per their match status; ⚠ and ⚡ files link to Section 4. Files unique to one service are listed under "Only in &lt;service&gt;" with a ◆ marker.
 
-- **Part 2 — Folder tree**: collapsible `<details>`/`<summary>` nodes. Each node shows the subtree status symbol (★ = identical subtree, ~ = partially duplicated, ✗ = has conflicts), per-folder file counts, and file-level detail within each expanded folder. Files shared across services are listed under "Shared across services" and annotated with ★/✓/⚠/⚡ per their match status; ⚠ and ⚡ files link to Section 4. Files unique to one service are listed under "Only in &lt;service&gt;" with a → marker.
+- **Part 2 — Fully duplicated subtrees** panel: a table listing each `safe_to_delete_roots` entry with a per-service ✓ or — column and a total file count for the subtree. Only shown when at least one fully-identical subtree exists.
 
 ### Section 4: Files Requiring Action
 
@@ -47,18 +72,18 @@ Files that share a name across services but require manual review before deletio
 - Symlinks with `version_status = "target_diverged"` — both services have a symlink at the same path but pointing to different targets (symbol: ↪⚠).
 - Mixed-type entries with `content_match = "mixed_type"` — one service has a regular file, another has a symlink at the same name (symbol: ↪⚠).
 
-Sorted by age gap (largest first). Columns:
+Sorted by relative path. Columns:
 
 | Column | Description |
 |---|---|
 | File | Filename |
 | Folder | Relative folder path |
-| Status | `different · diverged`, `different · phantom`, or `mixed_type · target_diverged` |
+| Status | `different · diverged`, `different · phantom`, or `mixed type` (for mixed-type file/symlink conflicts) |
 | Per-service columns | Size and modification timestamp for each service |
 
 ### Section 5: Duplicate Files
 
-Two subsections:
+Three subsections:
 
 **Duplicate Files** — A row per confirmed duplicate group (files with `content_match = identical` or `unverified`). Columns:
 
@@ -68,9 +93,24 @@ Two subsections:
 | Folder | Relative folder path within the directory |
 | Size | Human-readable file size |
 | Found in | Which services contain this file |
-| Match | Combined `content_match · version_status` badge, e.g. `identical · same`, `identical · diverged`, `unverified · same` |
+| Match | `content_match` badge: `identical` (green) or `unverified` (amber) |
+| Version | `version_status` badge: `same` (green) or `diverged` (amber) |
 
 **Symlinks** — A row per symlink pair where both services agree on the resolved target. Each row shows the symlink name, relative folder, the resolved target path, and which services contain it. Annotated with the ↪ symbol. Dangling symlinks (no resolved target) are shown with a `—` in the Target column.
+
+**Version-Diverged Files** — Files where `content_match = identical` (or `unverified`) but `version_status = diverged`. Content matches (or was not verified); only the modification timestamp differs beyond the tolerance window. Rows are highlighted amber. Columns:
+
+| Column | Description |
+|---|---|
+| File | Filename |
+| Folder | Relative folder path |
+| Size | Human-readable file size |
+| Found in | Which services contain this file |
+| Newest in | Which service has the most recent copy (bold ★) |
+| Age gap (days) | Days between the oldest and newest copy |
+| Per-service columns | Modification date/time (UTC) for each service; newest copy shown bold with ★ |
+
+Safe to delete older copies once content is confirmed.
 
 ---
 
@@ -191,14 +231,15 @@ The `confidence` field from earlier versions has been replaced by two independen
 
 ### `conflict_groups`
 
-Array of file groups where `content_match = "different"` — files that share a name and size but have differing MD5 checksums. These are separated from `duplicate_groups` because they require manual review before any deletion.
+Array of file groups that require manual review before deletion. Entries have `content_match = "different"` (MD5 mismatch) or `content_match = "mixed_type"` (one service has a regular file, another has a symlink at the same name).
 
-Each entry mirrors the shape of `duplicate_groups` entries but includes `service_details` with per-service `size`, `mtime` (formatted string, e.g. `"2024-01-15 10:00 UTC"`), and `mtime_raw` (Unix timestamp float) fields, and always has `content_match = "different"`.
+Each entry includes `service_details` with per-service `size`, `mtime` (formatted string, e.g. `"2024-01-15 10:00 UTC"`), and `mtime_raw` (Unix timestamp float) fields.
 
 | `version_status` value | Meaning |
 |---|---|
 | `diverged` | Content differs and timestamps also differ — keep the newer copy |
 | `phantom` | Content differs despite matching timestamps — keep both copies |
+| `conflict` | Mixed-type entry (file vs symlink) — version comparison not applicable |
 
 ### `safe_to_delete_roots`
 
