@@ -273,6 +273,12 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
     # Build name+size indexes per directory
     indexes = {label: build_name_size_index(recs) for label, recs in scanned.items()}
 
+    # Build rel_path index per directory (for mixed-type symlink/file detection)
+    rel_path_indexes: dict[str, dict[str, dict]] = {
+        label: {r["rel_path"].lower(): r for r in recs}
+        for label, recs in scanned.items()
+    }
+
     # ── find duplicate groups ──────────────────────────────────────
     # A group = same logical file appearing in 2+ directories.
     # Key: (normalised_name, size_bucket) — we match pairwise then cluster.
@@ -346,6 +352,18 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
                     "content_match": "mixed_type",
                     "version_status": vs,
                     "matches": present_in,
+                    "service_details": {
+                        label: {
+                            "size":           rec.get("size"),
+                            "mtime":          fmt_ts(rec.get("mtime", 0.0)),
+                            "mtime_raw":      rec.get("mtime", 0.0),
+                            "is_symlink":     rec.get("is_symlink", False),
+                            "symlink_target": rec.get("symlink_target"),
+                        }
+                        for label, rec in present_in.items()
+                    },
+                    "newest_in": None,           # Not applicable for mixed-type
+                    "age_difference_days": None, # Not applicable for mixed-type
                 })
                 all_matched = False  # prevent falling through to group building
                 break
@@ -393,6 +411,55 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         else:
             duplicate_groups.append(group)
 
+    # ── mixed-type detection pass ──────────────────────────────────
+    # A symlink in one service and a regular file in another share the same
+    # rel_path but differ in size (-1 vs real size), so the (name, size) index
+    # never pairs them.  Find them here via the rel_path index.
+    already_handled = {g["rel_path"].lower() for g in conflict_groups}
+    already_handled |= {g["rel_path"].lower() for g in duplicate_groups}
+    already_handled |= {s["rel_path"].lower() for s in symlinks}
+
+    all_rel_paths: set[str] = set()
+    for recs in scanned.values():
+        for r in recs:
+            all_rel_paths.add(r["rel_path"].lower())
+
+    for rp_lower in all_rel_paths:
+        if rp_lower in already_handled:
+            continue
+        present_in = {}
+        for label in labels:
+            rec = rel_path_indexes[label].get(rp_lower)
+            if rec is not None:
+                present_in[label] = rec
+        if len(present_in) < 2:
+            continue
+        symlink_labels  = [l for l, r in present_in.items() if r.get("is_symlink")]
+        regular_labels  = [l for l, r in present_in.items() if not r.get("is_symlink")]
+        if not symlink_labels or not regular_labels:
+            continue  # All same type — handled by main loop
+        first_rec = next(iter(present_in.values()))
+        conflict_groups.append({
+            "name_orig":     first_rec["name_orig"],
+            "rel_path":      first_rec["rel_path"],
+            "folder":        first_rec.get("folder", "."),
+            "content_match": "mixed_type",
+            "version_status": "conflict",
+            "matches":       present_in,
+            "service_details": {
+                label: {
+                    "size":           rec.get("size"),
+                    "mtime":          fmt_ts(rec.get("mtime", 0.0)),
+                    "mtime_raw":      rec.get("mtime", 0.0),
+                    "is_symlink":     rec.get("is_symlink", False),
+                    "symlink_target": rec.get("symlink_target"),
+                }
+                for label, rec in present_in.items()
+            },
+            "newest_in":           None,
+            "age_difference_days": None,
+        })
+
     # Build lookup for folder tree renderer (Task 6):
     # (name_lower, folder_str) → {content_match, version_status, conflict_index}
     _file_classifications = {}
@@ -428,6 +495,9 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
     for g in duplicate_groups + conflict_groups:
         for label in g["matches"]:
             dup_rel_paths[label].add(g["rel_path"].lower())
+    for s in symlinks:
+        for label in s.get("services", []):
+            dup_rel_paths[label].add(s["rel_path"].lower())
 
     unique_counts = {}
     unique_files  = {}
