@@ -83,6 +83,25 @@ python3 src/cloud_duplicate_analyzer.py ~/Google\ Drive ~/Dropbox --no-checksum
 python3 src/cloud_duplicate_analyzer.py ~/Google\ Drive ~/OneDrive --mtime-fuzz 60
 ```
 
+## Safety & Best Practices
+
+### Report Confidentiality
+
+Reports contain complete file paths and directory structures from your cloud storage. **Do not share reports publicly or with untrusted parties** without reviewing them first.
+
+### Symlink Handling
+
+The tool detects **file-type symlinks only** and compares them by target path, not content. Directory symlinks are not traversed (with `os.walk`'s default `followlinks=False`). If you have symlinks pointing to sensitive locations or external drives, be aware that the report will show their targets.
+
+### Large Directories and Performance
+
+For directories with many files (50,000+) or very large files:
+
+- **Default behavior**: MD5 checksums are computed for all candidates, providing high confidence in matches but taking time on large files.
+- **Faster alternative**: Use `--no-checksum` to skip MD5 verification and rely on filename + size + modification time only. Matches will be labeled `unverified` and the "phantom" false-positive case (different content with identical timestamps) cannot be detected.
+
+Choose based on your priority: correctness (use default) or speed (use `--no-checksum`).
+
 ## Output
 
 Each run produces two files side-by-side:

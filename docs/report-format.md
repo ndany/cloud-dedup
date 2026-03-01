@@ -74,6 +74,14 @@ Two subsections:
 
 ---
 
+## Report Confidentiality
+
+Reports contain complete file paths, directory structures, and file metadata from your compared directories. **Do not share reports publicly or with untrusted parties** without first reviewing the content. Paths may reveal information about your system organization, project structure, or personally-identifiable information.
+
+If you need to share the report with others, consider redacting sensitive paths or filename patterns first.
+
+---
+
 ## JSON Output Schema
 
 ```json
