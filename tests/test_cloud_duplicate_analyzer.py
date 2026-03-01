@@ -371,5 +371,56 @@ class TestSymlinkDetection(unittest.TestCase):
         self.assertEqual(result, ("symlink", "target_diverged"))
 
 
+class TestSymlinkAnalysis(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp)
+
+    def test_symlink_analysis_integration(self):
+        """Verify symlinks are analyzed separately in results."""
+        dir_a = Path(self.tmp) / "service_a"
+        dir_b = Path(self.tmp) / "service_b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        # Create regular files
+        make_file(dir_a, "file.txt", b"content")
+        make_file(dir_b, "file.txt", b"content")
+
+        # Create symlinks pointing to same target
+        target = dir_a / "target.txt"
+        target.write_text("target")
+        (dir_a / "link.txt").symlink_to(target)
+        (dir_b / "link.txt").symlink_to(target)
+
+        result = cda.analyze(
+            [("DirA", dir_a), ("DirB", dir_b)],
+            mtime_fuzz=5.0,
+            use_checksum=True,
+            skip_hidden=True,
+        )
+
+        # Result must have symlinks section
+        self.assertIn("symlinks", result)
+        symlinks = result["symlinks"]
+
+        # link.txt must be in symlinks, not in duplicate_groups
+        link_symlinks = [s for s in symlinks if s["name_orig"] == "link.txt"]
+        self.assertGreater(len(link_symlinks), 0)
+
+        # link.txt must NOT be in duplicate_groups
+        link_dups = [d for d in result["duplicate_groups"] if d["name_orig"] == "link.txt"]
+        self.assertEqual(len(link_dups), 0)
+
+        # Verify symlink entry has required fields
+        sym = link_symlinks[0]
+        self.assertTrue(sym.get("is_symlink"))
+        self.assertIn("symlink_targets", sym)
+        self.assertEqual(sym.get("symlink_status"), "target_identical")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -287,6 +287,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
 
     duplicate_groups = []   # content_match: 'identical' or 'unverified'
     conflict_groups  = []   # content_match: 'different'
+    symlinks         = []   # content_match: 'symlink' (both records are symlinks)
 
     for key in all_keys:
         name, size = key
@@ -317,6 +318,38 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
                 all_matched = False
                 break
             cm, vs = result
+
+            if cm == "symlink":
+                first_label = next(iter(present_in))
+                first_rec = present_in[first_label]
+                symlinks.append({
+                    "name_orig": first_rec["name_orig"],
+                    "rel_path": first_rec["rel_path"],
+                    "folder": first_rec.get("folder", "."),
+                    "is_symlink": True,
+                    "symlink_targets": {
+                        label: rec.get("symlink_target")
+                        for label, rec in present_in.items()
+                    },
+                    "symlink_status": vs,
+                    "services": list(present_in.keys()),
+                })
+                all_matched = False  # prevent falling through to group building
+                break
+
+            if cm == "mixed_type":
+                first_rec = next(iter(present_in.values()))
+                conflict_groups.append({
+                    "name_orig": first_rec["name_orig"],
+                    "rel_path": first_rec["rel_path"],
+                    "folder": first_rec.get("folder", "."),
+                    "content_match": "mixed_type",
+                    "version_status": vs,
+                    "matches": present_in,
+                })
+                all_matched = False  # prevent falling through to group building
+                break
+
             if content_rank[cm] > content_rank[group_content]:
                 group_content = cm
             if version_rank[vs] > version_rank[group_version]:
@@ -543,6 +576,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         "total_files": {label: len(recs) for label, recs in scanned.items()},
         "duplicate_groups": duplicate_groups,
         "conflict_groups":        conflict_groups,
+        "symlinks":               symlinks,
         "_file_classifications":  _file_classifications,
         "_scanned_records":       {label: scanned[label] for label in labels},
         "unique_counts": unique_counts,
