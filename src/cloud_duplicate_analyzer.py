@@ -564,9 +564,6 @@ tr:nth-child(even) td { background: #f4f8fc; }
 .badge-superset   { background:#d1ecf1; color:#0c5460; }
 .badge-diverged   { background:#f8d7da; color:#721c24; }
 .badge-same       { background:#d4edda; color:#155724; }
-.badge-exact      { background:#d4edda; color:#155724; }
-.badge-likely     { background:#fff3cd; color:#856404; }
-.warn-row td      { background:#fff8e1 !important; }
 .action-row    { }
 .phantom-row td { background:#fff8e1 !important; }
 .conflict-row td { background:#fff0f0 !important; }
