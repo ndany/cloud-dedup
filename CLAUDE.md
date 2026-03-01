@@ -50,6 +50,23 @@ The entire tool lives in a single file: `src/cloud_duplicate_analyzer.py`. No th
 - `folder_comparisons`: list of dicts with `folder_path`, `services_present`, `relationship`, `details` (per-label `_only` sets and `in_all`)
 - The final `result` dict is serialised directly to JSON (with `Path` objects coerced via `default=str`)
 
+## Report Color Scheme
+
+All badge pills, status ovals, and row highlights in `render_html()` follow this semantic scheme. **Apply it consistently to any new status indicators added to the report.**
+
+| Color | CSS / Inline | Values |
+|---|---|---|
+| Green | `background:#d4edda; color:#155724` | `identical`, `same` — safe to delete |
+| Amber | `background:#fff3cd; color:#856404` | `diverged`, `unverified`, `symlink` — requires review |
+| Red | `background:#f8d7da; color:#721c24` | `different`, `phantom`, `conflict`/mixed-type — not safe to delete |
+
+Row highlight tints (applied to `<tr style="background:...">` or `<td style="background:...!important">`):
+- Red condition (phantom / conflict): `#fdecea`
+- Amber condition (diverged): `#fffde7`
+- Green condition (identical/same rows): no highlight needed
+
+CSS badge classes (`.badge-*`) in the style block must stay in sync with these values. Inline styles in Section 2 pill badges must also match.
+
 ## Docs
 
 - `docs/how-it-works.md` — matching algorithm and folder analysis logic in detail

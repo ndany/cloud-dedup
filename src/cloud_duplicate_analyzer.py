@@ -735,19 +735,19 @@ td    { padding: 7px 10px; border: 1px solid #dde; vertical-align: top; }
 tr:nth-child(even) td { background: #f4f8fc; }
 .badge { display:inline-block; padding:2px 8px; border-radius:12px;
          font-size:11px; font-weight:bold; }
-.badge-identical  { background:#d4edda; color:#155724; }
-.badge-unverified { background:#e2e3e5; color:#383d41; }
+.badge-identical  { background:#d4edda; color:#155724; }   /* green  — safe   */
+.badge-same       { background:#d4edda; color:#155724; }   /* green  — safe   */
+.badge-diverged   { background:#fff3cd; color:#856404; }   /* amber  — review */
+.badge-unverified { background:#fff3cd; color:#856404; }   /* amber  — review */
+.badge-phantom    { background:#f8d7da; color:#721c24; }   /* red    — unsafe */
+.badge-different  { background:#f8d7da; color:#721c24; }   /* red    — unsafe */
 .badge-overlap    { background:#fff3cd; color:#856404; }
 .badge-subset     { background:#d1ecf1; color:#0c5460; }
 .badge-superset   { background:#d1ecf1; color:#0c5460; }
-.badge-diverged   { background:#f8d7da; color:#721c24; }
-.badge-same       { background:#d4edda; color:#155724; }
 .action-row    { }
 .phantom-row td { background:#fff8e1 !important; }
 .conflict-row td { background:#fff0f0 !important; }
 .service-detail { font-size:12px; line-height:1.6; }
-.badge-phantom  { background:#fff3cd; color:#856404; }
-.badge-different { background:#f8d7da; color:#721c24; }
 .stat-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr));
              gap:16px; margin:20px 0; }
 .stat-card { background:#f0f6fc; border:1px solid #c5d8ec; border-radius:8px;
@@ -775,7 +775,7 @@ code { background:#f0f0f0; padding:1px 4px; border-radius:3px; font-size:12px; }
 .sym-dp { color: #fd7e14; }
 .sym-uniq { color: #ff9900; font-weight: bold; }
 .sym-symlink { color: #0066cc; font-weight: bold; }
-.badge-symlink { background-color: #e6f2ff; color: #0066cc; border: 1px solid #0066cc; }
+.badge-symlink { background:#fff3cd; color:#856404; }   /* amber — review */
 """
 
 def badge(text, cls=None):
@@ -865,7 +865,7 @@ Comparing {n} directories</p>
             )
         if ps["unverified"]:
             match_parts.append(
-                f'<span style="{_B};background:#e9ecef;color:#495057">{ps["unverified"]:,} unverified</span>'
+                f'<span style="{_B};background:#fff3cd;color:#856404">{ps["unverified"]:,} unverified</span>'
             )
         if ps["different"]:
             match_parts.append(
@@ -877,27 +877,26 @@ Comparing {n} directories</p>
         version_parts = []
         if ps["phantom"]:
             version_parts.append(
-                f'<span style="{_B};background:#fff3cd;color:#856404;font-weight:bold">{ps["phantom"]:,} phantom</span>'
+                f'<span style="{_B};background:#f8d7da;color:#721c24;font-weight:bold">{ps["phantom"]:,} phantom</span>'
             )
         if ps["diverged"]:
             version_parts.append(
-                f'<span style="{_B};background:#dbeafe;color:#1e40af">{ps["diverged"]:,} diverged</span>'
+                f'<span style="{_B};background:#fff3cd;color:#856404">{ps["diverged"]:,} diverged</span>'
             )
         if ps["conflict"]:
             version_parts.append(
-                f'<span style="{_B};background:#ede9fe;color:#6d28d9">{ps["conflict"]:,} mixed-type</span>'
+                f'<span style="{_B};background:#f8d7da;color:#721c24;font-weight:bold">{ps["conflict"]:,} mixed-type</span>'
             )
         if ps["same"]:
             version_parts.append(
-                f'<span style="{_B};background:#f1f3f5;color:#6c757d">{ps["same"]:,} same</span>'
+                f'<span style="{_B};background:#d4edda;color:#155724">{ps["same"]:,} same</span>'
             )
         if not version_parts:
             version_parts.append('<span style="color:#aaa">—</span>')
 
         row_bg = (
-            '#fff8e1' if ps["phantom"] > 0 else
-            '#fdf0f8' if ps["conflict"] > 0 else
-            '#eff6ff' if ps["diverged"] > 0 else
+            '#fdecea' if ps["phantom"] > 0 or ps["conflict"] > 0 else
+            '#fffde7' if ps["diverged"] > 0 else
             ''
         )
         row_style = f' style="background:{row_bg}"' if row_bg else ''
@@ -1226,12 +1225,13 @@ Comparing {n} directories</p>
         parts.append("<p>No duplicate files found.</p>")
     else:
         parts.append('<table><tr><th>File</th><th>Folder</th><th>Size</th>'
-                     '<th>Found in</th><th>Match</th></tr>')
+                     '<th>Found in</th><th>Match</th><th>Version</th></tr>')
         for g in sorted(dups, key=lambda x: x["rel_path"]):
             found_in = ", ".join(g["matches"].keys())
-            match_label = f'{g.get("content_match", "unverified")} · {g.get("version_status", "same")}'
-            match_cell  = badge(match_label, g.get("content_match", "unverified"))
-            # folder = parent of rel_path
+            content_match  = g.get("content_match", "unverified")
+            version_status = g.get("version_status", "same")
+            match_cell   = badge(content_match, content_match)
+            version_cell = badge(version_status, version_status)
             rp = Path(g["rel_path"])
             folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
             parts.append(f'<tr>'
@@ -1239,7 +1239,8 @@ Comparing {n} directories</p>
                          f'<td><code>{html.escape(folder_str)}</code></td>'
                          f'<td style="white-space:nowrap">{human_size(g["size"])}</td>'
                          f'<td>{html.escape(found_in)}</td>'
-                         f'<td>{match_cell}</td></tr>')
+                         f'<td>{match_cell}</td>'
+                         f'<td>{version_cell}</td></tr>')
         parts.append("</table>")
 
     # Symlinks subsection

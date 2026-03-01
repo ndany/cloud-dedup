@@ -5,6 +5,24 @@ Each run of `cloud_duplicate_analyzer.py` produces two output files with the sam
 - `<output>.html` — Visual report, open in any browser
 - `<output>.json` — Raw structured data
 
+## Color Scheme
+
+All badge pills and status indicators in the report follow a consistent semantic color scheme:
+
+| Color | Values | Meaning |
+|---|---|---|
+| **Green** | `identical`, `same` | Safe to delete — content confirmed identical and timestamps agree |
+| **Amber** | `diverged`, `unverified`, `symlink` | Requires review — content may match but needs verification or a decision |
+| **Red** | `different`, `phantom`, `conflict` / mixed-type | Not safe to delete — content differs or conflict cannot be resolved automatically |
+
+Row highlighting uses the same scheme with lighter background tints:
+- Red/phantom/conflict rows → light red background
+- Amber/diverged rows → light amber background
+
+This applies consistently across all sections: Section 2 badge pills, Section 5 Match and Version badges, and any future status indicators added to the report.
+
+---
+
 ## Symbol Legend
 
 | Symbol | Meaning |
@@ -32,8 +50,8 @@ A table showing per-pair match and version breakdowns across all compared servic
 | Column | Description |
 |---|---|
 | Service Pair | The two services being compared (e.g. `Google Drive↔Dropbox`) |
-| Match Type | Color-coded counts: **identical** (green), **different** (red), **unverified** (gray) |
-| Version Status | Color-coded counts: **diverged** (blue), **phantom** (red), **mixed-type** (purple), **same** (gray) |
+| Match Type | Color-coded counts: **identical** (green), **different** (red), **unverified** (amber) |
+| Version Status | Color-coded counts: **same** (green), **diverged** (amber), **phantom** (red), **mixed-type** (red) |
 | Total | All files shared between the pair (duplicates + conflicts) |
 
 Also shows per-service unique file counts (files not duplicated anywhere).
@@ -75,11 +93,24 @@ Three subsections:
 | Folder | Relative folder path within the directory |
 | Size | Human-readable file size |
 | Found in | Which services contain this file |
-| Match | Combined `content_match · version_status` badge, e.g. `identical · same`, `identical · diverged`, `unverified · same` |
+| Match | `content_match` badge: `identical` (green) or `unverified` (amber) |
+| Version | `version_status` badge: `same` (green) or `diverged` (amber) |
 
 **Symlinks** — A row per symlink pair where both services agree on the resolved target. Each row shows the symlink name, relative folder, the resolved target path, and which services contain it. Annotated with the ↪ symbol. Dangling symlinks (no resolved target) are shown with a `—` in the Target column.
 
-**Version-Diverged Files** — Files where `content_match = identical` (or `unverified`) but `version_status = diverged`. Content matches (or was not verified); only the modification timestamp differs beyond the tolerance window. Columns: File, Folder, Size, Found in, Newest in (which service has the latest copy). Safe to delete older copies once content is confirmed.
+**Version-Diverged Files** — Files where `content_match = identical` (or `unverified`) but `version_status = diverged`. Content matches (or was not verified); only the modification timestamp differs beyond the tolerance window. Rows are highlighted amber. Columns:
+
+| Column | Description |
+|---|---|
+| File | Filename |
+| Folder | Relative folder path |
+| Size | Human-readable file size |
+| Found in | Which services contain this file |
+| Newest in | Which service has the most recent copy (bold ★) |
+| Age gap (days) | Days between the oldest and newest copy |
+| Per-service columns | Modification date/time (UTC) for each service; newest copy shown bold with ★ |
+
+Safe to delete older copies once content is confirmed.
 
 ---
 
