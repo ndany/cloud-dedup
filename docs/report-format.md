@@ -60,7 +60,7 @@ Sorted by relative path. Columns:
 |---|---|
 | File | Filename |
 | Folder | Relative folder path |
-| Status | `different · diverged`, `different · phantom`, or `mixed_type · target_diverged` |
+| Status | `different · diverged`, `different · phantom`, or `mixed type` (for mixed-type file/symlink conflicts) |
 | Per-service columns | Size and modification timestamp for each service |
 
 ### Section 5: Duplicate Files
@@ -200,14 +200,15 @@ The `confidence` field from earlier versions has been replaced by two independen
 
 ### `conflict_groups`
 
-Array of file groups where `content_match = "different"` — files that share a name and size but have differing MD5 checksums. These are separated from `duplicate_groups` because they require manual review before any deletion.
+Array of file groups that require manual review before deletion. Entries have `content_match = "different"` (MD5 mismatch) or `content_match = "mixed_type"` (one service has a regular file, another has a symlink at the same name).
 
-Each entry mirrors the shape of `duplicate_groups` entries but includes `service_details` with per-service `size`, `mtime` (formatted string, e.g. `"2024-01-15 10:00 UTC"`), and `mtime_raw` (Unix timestamp float) fields, and always has `content_match = "different"`.
+Each entry includes `service_details` with per-service `size`, `mtime` (formatted string, e.g. `"2024-01-15 10:00 UTC"`), and `mtime_raw` (Unix timestamp float) fields.
 
 | `version_status` value | Meaning |
 |---|---|
 | `diverged` | Content differs and timestamps also differ — keep the newer copy |
 | `phantom` | Content differs despite matching timestamps — keep both copies |
+| `conflict` | Mixed-type entry (file vs symlink) — version comparison not applicable |
 
 ### `safe_to_delete_roots`
 
