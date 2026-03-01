@@ -98,5 +98,7 @@ Folders with `subtree_status = identical` are candidates for safe deletion. The 
 ## Performance Notes
 
 - For large directories (tens of thousands of files), the bottleneck is MD5 computation on large files. Use `--no-checksum` to skip this if speed matters more than precision.
+  - **Default**: Computes MD5 for all name+size candidates, providing confidence in matches and detecting "phantom" false positives (content differs despite identical timestamps).
+  - **With `--no-checksum`**: Relies on filename + size + modification time only. Matches are labeled `unverified` and the phantom case cannot be detected. Trade speed for reduced confidence.
 - The name+size index means the matching step itself is fast regardless of directory size.
 - Memory usage is proportional to the total number of files (one record per file).
