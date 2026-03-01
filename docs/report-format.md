@@ -70,7 +70,7 @@ Two subsections:
 | Found in | Which services contain this file |
 | Match | Combined `content_match · version_status` badge, e.g. `identical · same`, `identical · diverged`, `unverified · same` |
 
-**Symlinks** — A row per symlink pair where both services agree on the resolved target. Each row shows the symlink name, relative folder, the resolved target path, and which services contain it. Annotated with the ↪ symbol. Dangling symlinks (no resolved target) are shown with `target: (dangling)`.
+**Symlinks** — A row per symlink pair where both services agree on the resolved target. Each row shows the symlink name, relative folder, the resolved target path, and which services contain it. Annotated with the ↪ symbol. Dangling symlinks (no resolved target) are shown with a `—` in the Target column.
 
 ---
 
