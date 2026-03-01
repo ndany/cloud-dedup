@@ -21,11 +21,11 @@ Also shows the number of files that are **unique** to each service (i.e. not dup
 
 ### Section 3: Folder Structure Analysis
 
-Stat cards showing counts of identical / subset-superset / overlap folders, then three sub-tables:
+Two parts:
 
-- **Identical folders** — folder path, services present, file count
-- **Subset/superset folders** — which service has extra files and how many
-- **Overlapping folders** — for each service, what files are exclusive to it
+- **Part 1 — Fully duplicated subtrees** panel: a table listing each `safe_to_delete_roots` entry with a per-service ✓ or — column and a total file count for the subtree. Only shown when at least one fully-identical subtree exists.
+
+- **Part 2 — Folder tree**: collapsible `<details>`/`<summary>` nodes. Each node shows the subtree status symbol (★ = identical subtree, ~ = partially duplicated, ✗ = has conflicts), per-folder file counts, and file-level detail within each expanded folder. Files shared across services are listed under "Shared across services" and annotated with ★/✓/⚠/⚡ per their match status; ⚠ and ⚡ files link to Section 4. Files unique to one service are listed under "Only in &lt;service&gt;" with a → marker.
 
 ### Section 4: Files Requiring Action
 
@@ -36,7 +36,7 @@ Files that share a name and size across services but have **different content** 
 | File | Filename |
 | Folder | Relative folder path |
 | Status | `different · diverged` (timestamps differ) or `different · phantom` (timestamps agree but content differs) |
-| Per-service columns | Size, modification timestamp, and MD5 hash for each service |
+| Per-service columns | Size and modification timestamp for each service |
 
 ### Section 5: Duplicate Files
 
@@ -80,12 +80,7 @@ A row per confirmed duplicate group (files with `content_match = identical` or `
       "content_match": "identical",
       "version_status": "same",
       "newest_in": null,
-      "age_difference_days": 0.0,
-      "copy_mtimes": {
-        "Google Drive": "2021-03-15 18:42 UTC",
-        "Dropbox":      "2021-03-15 18:42 UTC",
-        "OneDrive":     "2021-03-15 18:42 UTC"
-      }
+      "age_difference_days": 0.0
     }
   ],
   "conflict_groups": [
@@ -98,8 +93,8 @@ A row per confirmed duplicate group (files with `content_match = identical` or `
       "newest_in": "Dropbox",
       "age_difference_days": 3.2,
       "service_details": {
-        "Google Drive": { "size": 24576, "mtime": 1234567800.0, "md5": "abc123..." },
-        "Dropbox":      { "size": 24576, "mtime": 1234844600.0, "md5": "def456..." }
+        "Google Drive": { "size": 24576, "mtime": "2009-02-13 23:30 UTC", "mtime_raw": 1234567800.0 },
+        "Dropbox":      { "size": 24576, "mtime": "2009-02-16 07:43 UTC", "mtime_raw": 1234844600.0 }
       }
     }
   ],
@@ -133,7 +128,7 @@ A row per confirmed duplicate group (files with `content_match = identical` or `
     {
       "folder_path": "Photos/2020",
       "subtree_status": "identical",
-      "total_files": 42
+      "subtree_total_files": 42
     }
   ],
   "relationship_counts": {
@@ -168,7 +163,7 @@ The `confidence` field from earlier versions has been replaced by two independen
 
 Array of file groups where `content_match = "different"` — files that share a name and size but have differing MD5 checksums. These are separated from `duplicate_groups` because they require manual review before any deletion.
 
-Each entry mirrors the shape of `duplicate_groups` entries but includes `service_details` with per-service `size`, `mtime`, and `md5` fields, and always has `content_match = "different"`.
+Each entry mirrors the shape of `duplicate_groups` entries but includes `service_details` with per-service `size`, `mtime` (formatted string, e.g. `"2024-01-15 10:00 UTC"`), and `mtime_raw` (Unix timestamp float) fields, and always has `content_match = "different"`.
 
 | `version_status` value | Meaning |
 |---|---|

@@ -36,7 +36,9 @@ Usage
                            Ignored if -o is also given.
     --mtime-fuzz N         Seconds within which two mtimes are considered equal.
                            Default: 5
-    --no-checksum          Skip MD5 checksums; rely only on name+size+mtime.
+    --no-checksum          Skip MD5 checksums. Matches labelled 'unverified';
+                           'phantom' conflicts (same metadata, different content)
+                           cannot be detected.
     --skip-hidden          Skip files/folders whose name starts with '.' (default).
     --include-hidden       Include hidden files/folders.
     -h, --help             Show this help message and exit.
@@ -655,7 +657,7 @@ Comparing {n} directories</p>
     parts.append(f"<p>Duplicate matching used: same filename + same size, "
                  f"or same filename + modification time within "
                  f"{result.get('mtime_fuzz', 5)} seconds. "
-                 f"MD5 checksums were computed for ambiguous cases.</p>")
+                 f"MD5 checksums were computed for all candidate pairs.</p>")
 
     # ── section 5: duplicate file list ──
     parts.append(f"<h2>5. Duplicate Files ({len(dups)} confirmed)</h2>")
@@ -844,7 +846,7 @@ Comparing {n} directories</p>
                     unique_to[labels_with[0]].append(fname)
 
             if in_multiple:
-                out.append('<div class="tree-file-section">In all services</div>')
+                out.append('<div class="tree-file-section">Shared across services</div>')
                 for fname, cls_info in in_multiple:
                     if cls_info:
                         sym, sym_cls = _file_sym(
@@ -975,8 +977,12 @@ def main():
     # Also save raw JSON alongside the HTML for programmatic use
     json_path = output_path.with_suffix(".json")
     with open(json_path, "w", encoding="utf-8") as f:
-        # Remove full_path (Path objects) before serialising
-        clean = json.loads(json.dumps(result, default=str))
+        # Remove full_path (Path objects) and private implementation keys before serialising
+        _PRIVATE_KEYS = {"_file_classifications", "_scanned_records"}
+        clean = json.loads(json.dumps(
+            {k: v for k, v in result.items() if k not in _PRIVATE_KEYS},
+            default=str
+        ))
         json.dump(clean, f, indent=2)
 
     print(f"\n✓ HTML report → {output_path}")
