@@ -870,7 +870,7 @@ Comparing {n} directories</p>
             targets = sym.get("symlink_targets", {})
             target_display = next((v for v in targets.values() if v), "—")
             status = sym.get("symlink_status", "unknown")
-            services_list = sym.get("services") or list(sym.get("matches", {}).keys())
+            services_list = sym.get("services", [])
             services = ", ".join(services_list)
             parts.append(
                 f'<tr>'
@@ -904,7 +904,9 @@ Comparing {n} directories</p>
             "<strong>⚡ different&nbsp;·&nbsp;phantom</strong> — content differs despite "
             "matching timestamps; keep both copies.<br>"
             "<strong>&#8618; mixed type</strong> — one service has a regular file and "
-            "another has a symlink with the same name.</p>"
+            "another has a symlink with the same name.<br>"
+            "<strong>&#8618; target_diverged</strong> — both services have a symlink with "
+            "the same name but pointing to different targets.</p>"
         )
         if conflicts:
             svc_headers = "".join(
@@ -1272,6 +1274,11 @@ def main():
     conflicts = result.get("conflict_groups", [])
     if conflicts:
         print(f"\n  ⚠  {len(conflicts)} file(s) require action (different content) — see Section 4 of report")
+    sym_list = result.get("symlinks", [])
+    div_sym_count = sum(1 for s in sym_list if s.get("symlink_status") == "target_diverged")
+    if sym_list:
+        print(f"  ↪  {len(sym_list)} symlink(s) detected"
+              + (f" ({div_sym_count} with diverged targets — see Section 4)" if div_sym_count else ""))
     rc = result["relationship_counts"]
     print(f"\n  Folder relationships:")
     for rel, cnt in sorted(rc.items()):

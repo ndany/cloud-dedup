@@ -47,7 +47,7 @@ Empty files (size == 0) are always classified `(identical, same)` regardless of 
 
 ### Detection Scope
 
-Only **file-type symlinks** are detected and reported. Directory symlinks appear in `dirnames` during `os.walk` and are traversed as regular directories; they are not reported as individual symlink entries. This is intentional — following directory symlinks allows discovery of files underneath them without special-casing the walk.
+Only **file-type symlinks** are detected and reported. Directory symlinks appear in `dirnames` during `os.walk`. With `followlinks=False` (the default), `os.walk` does not descend into them — files inside a directory symlink are not scanned. The symlink directory itself is also not reported as a symlink entry. The tool's symlink detection covers file-type symlinks only.
 
 ### Detection Method
 
@@ -69,7 +69,7 @@ Symlinks are compared by their **resolved target path string**, not by reading t
 |---|---|
 | Both services have a symlink at the same relative path | `symlinks` list (informational) |
 | One service has a regular file, another has a symlink at the same name | `conflict_groups` with `content_match = "mixed_type"` (Section 4) |
-| Both services have symlinks but targets differ | `conflict_groups` with `version_status = "target_diverged"` (Section 4) |
+| Both services have symlinks but targets differ | `symlinks` list with `symlink_status = "target_diverged"` (surfaced in Section 4 at render time) |
 
 Diverged symlinks (`target_diverged`) appear in **Section 4 — Files Requiring Action** because the services disagree on where the symlink points.
 
