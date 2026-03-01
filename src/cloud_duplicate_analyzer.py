@@ -820,22 +820,94 @@ Comparing {n} directories</p>
 
     # ── section 2: duplicate summary ──
     parts.append("<h2>2. Duplicate File Summary</h2>")
-    parts.append('<table><tr><th>Service Pair</th><th>Duplicate Files</th></tr>')
-    for pair, cnt in result["pairwise_counts"].items():
-        parts.append(f'<tr><td>{html.escape(pair)}</td><td>{cnt:,}</td></tr>')
+
+    # Compute per-pair match/version breakdowns
+    pair_stats: dict = {}
+    for i, la in enumerate(labels):
+        for lb in labels[i + 1:]:
+            pair_key = f"{la}↔{lb}"
+            dup_in_pair = [
+                g for g in dups
+                if la in g["matches"] and lb in g["matches"]
+            ]
+            conf_in_pair = [
+                g for g in result.get("conflict_groups", [])
+                if la in g.get("service_details", {}) and lb in g.get("service_details", {})
+            ]
+            all_in_pair = dup_in_pair + conf_in_pair
+            pair_stats[pair_key] = {
+                "identical":  sum(1 for g in dup_in_pair  if g["content_match"] == "identical"),
+                "unverified": sum(1 for g in dup_in_pair  if g["content_match"] == "unverified"),
+                "different":  len(conf_in_pair),
+                "same":       sum(1 for g in all_in_pair  if g["version_status"] == "same"),
+                "diverged":   sum(1 for g in all_in_pair  if g["version_status"] == "diverged"),
+                "phantom":    sum(1 for g in all_in_pair  if g["version_status"] == "phantom"),
+                "total":      len(all_in_pair),
+            }
+
+    parts.append(
+        '<table>'
+        '<tr><th>Service Pair</th><th>Match Type</th><th>Version Status</th><th>Total</th></tr>'
+    )
+    for pair_key, ps in pair_stats.items():
+        match_parts = []
+        if ps["identical"]:
+            match_parts.append(
+                f'<span style="color:#28a745;font-weight:bold">{ps["identical"]:,} identical</span>'
+            )
+        if ps["unverified"]:
+            match_parts.append(
+                f'<span style="color:#888">{ps["unverified"]:,} unverified</span>'
+            )
+        if ps["different"]:
+            match_parts.append(
+                f'<span style="color:#dc3545;font-weight:bold">{ps["different"]:,} different</span>'
+            )
+        if not match_parts:
+            match_parts.append('<span style="color:#aaa">—</span>')
+
+        version_parts = []
+        if ps["diverged"]:
+            version_parts.append(
+                f'<span style="color:#0069c0">{ps["diverged"]:,} diverged</span>'
+            )
+        if ps["phantom"]:
+            version_parts.append(
+                f'<span style="color:#dc3545">{ps["phantom"]:,} phantom</span>'
+            )
+        if ps["same"]:
+            version_parts.append(
+                f'<span style="color:#888">{ps["same"]:,} same</span>'
+            )
+        if not version_parts:
+            version_parts.append('<span style="color:#aaa">—</span>')
+
+        parts.append(
+            f'<tr>'
+            f'<td>{html.escape(pair_key)}</td>'
+            f'<td>{" &nbsp;|&nbsp; ".join(match_parts)}</td>'
+            f'<td>{" &nbsp;|&nbsp; ".join(version_parts)}</td>'
+            f'<td>{ps["total"]:,}</td>'
+            f'</tr>'
+        )
+
     if n > 2:
-        parts.append(f'<tr><td><strong>All {n} services</strong></td>'
-                     f'<td><strong>{result["all_services_count"]:,}</strong></td></tr>')
-    total_dup_instances = sum(result["pairwise_counts"].values())
-    parts.append(f'<tr><td><em>Unique files</em></td>')
-    unique_str = " | ".join(
-        f'{html.escape(l)}: {result["unique_counts"][l]:,}' for l in labels)
-    parts.append(f'<td><em>{unique_str}</em></td></tr>')
+        parts.append(
+            f'<tr><td><strong>All {n} services</strong></td>'
+            f'<td colspan="2"><em>(pairwise breakdown only)</em></td>'
+            f'<td><strong>{result["all_services_count"]:,}</strong></td></tr>'
+        )
+
+    unique_str = " &nbsp;|&nbsp; ".join(
+        f'{html.escape(l)}: {result["unique_counts"][l]:,} unique' for l in labels
+    )
+    parts.append(f'<tr><td colspan="4"><em>{unique_str}</em></td></tr>')
     parts.append("</table>")
-    parts.append(f"<p>Duplicate matching used: same filename + same size, "
-                 f"or same filename + modification time within "
-                 f"{result.get('mtime_fuzz', 5)} seconds. "
-                 f"MD5 checksums were computed for all candidate pairs.</p>")
+    parts.append(
+        f"<p>Duplicate matching used: same filename + same size. "
+        f"MD5 checksums were computed for all candidate pairs "
+        f"(mtime tolerance: {result.get('mtime_fuzz', 5)}s).</p>"
+    )
 
     # ── section 3: folder structure analysis ──
     fc_list        = result["folder_comparisons"]
