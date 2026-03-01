@@ -471,6 +471,8 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
             "content_match":  g["content_match"],
             "version_status": g["version_status"],
             "conflict_index": i,
+            "is_symlink":     False,
+            "symlink_target": None,
         }
     for g in duplicate_groups:
         rp = Path(g["rel_path"])
@@ -682,6 +684,8 @@ def _file_sym(content_match: str, version_status: str, is_symlink: bool = False)
     """Returns (symbol_char, css_class) for a file classification."""
     if is_symlink:
         return ("↪", "sym-symlink")
+    if content_match == "mixed_type":
+        return ("↪⚠", "sym-dd")
     if content_match in ("identical", "unverified") and version_status == "same":
         return ("★", "sym-is")
     if content_match in ("identical", "unverified") and version_status == "diverged":
@@ -866,7 +870,8 @@ Comparing {n} directories</p>
             targets = sym.get("symlink_targets", {})
             target_display = next((v for v in targets.values() if v), "—")
             status = sym.get("symlink_status", "unknown")
-            services = ", ".join(sym.get("services", []))
+            services_list = sym.get("services") or list(sym.get("matches", {}).keys())
+            services = ", ".join(services_list)
             parts.append(
                 f'<tr>'
                 f'<td><strong>&#8618; {html.escape(sym["name_orig"])}</strong><br>'
@@ -881,8 +886,10 @@ Comparing {n} directories</p>
 
     # ── section 4: files requiring action ──
     conflicts = result.get("conflict_groups", [])
-    parts.append(f"<h2>4. Files Requiring Action ({len(conflicts)} files)</h2>")
-    if not conflicts:
+    diverged_symlinks = [s for s in result.get("symlinks", []) if s.get("symlink_status") == "target_diverged"]
+    total_action_items = len(conflicts) + len(diverged_symlinks)
+    parts.append(f'<h2 id="s4">4. Files Requiring Action ({total_action_items})</h2>')
+    if not conflicts and not diverged_symlinks:
         parts.append(
             "<p>No content conflicts found — all matched files have identical content "
             "(or matching was skipped with <code>--no-checksum</code>).</p>"
@@ -899,74 +906,96 @@ Comparing {n} directories</p>
             "<strong>&#8618; mixed type</strong> — one service has a regular file and "
             "another has a symlink with the same name.</p>"
         )
-        svc_headers = "".join(
-            f'<th>{html.escape(l)}</th>' for l in labels
-        )
-        parts.append(
-            f'<table><tr><th>File</th><th>Folder</th><th>Status</th>{svc_headers}</tr>'
-        )
-        for i, g in enumerate(sorted(conflicts, key=lambda x: x["rel_path"])):
-            rp = Path(g["rel_path"])
-            folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
-            cm = g.get("content_match", "different")
-            vs = g["version_status"]
-            if cm == "mixed_type":
-                symbol = "&#8618;"
-                row_cls = "conflict-row"
-                status_parts = ["mixed&nbsp;type"]
-            else:
-                symbol = "⚡" if vs == "phantom" else "⚠"
-                row_cls = "phantom-row" if vs == "phantom" else "conflict-row"
-                status_parts = [f"different&nbsp;·&nbsp;{html.escape(vs)}"]
-                if vs == "diverged" and g.get("newest_in"):
-                    status_parts.append(
-                        f'<br><span style="font-size:11px;color:#666">'
-                        f'newer in {html.escape(g["newest_in"])}</span>'
+        if conflicts:
+            svc_headers = "".join(
+                f'<th>{html.escape(l)}</th>' for l in labels
+            )
+            parts.append(
+                f'<table><tr><th>File</th><th>Folder</th><th>Status</th>{svc_headers}</tr>'
+            )
+            for i, g in enumerate(sorted(conflicts, key=lambda x: x["rel_path"])):
+                rp = Path(g["rel_path"])
+                folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
+                cm = g.get("content_match", "different")
+                vs = g["version_status"]
+                if cm == "mixed_type":
+                    symbol = "&#8618;"
+                    row_cls = "conflict-row"
+                    status_parts = ["mixed&nbsp;type"]
+                else:
+                    symbol = "⚡" if vs == "phantom" else "⚠"
+                    row_cls = "phantom-row" if vs == "phantom" else "conflict-row"
+                    status_parts = [f"different&nbsp;·&nbsp;{html.escape(vs)}"]
+                    if vs == "diverged" and g.get("newest_in"):
+                        status_parts.append(
+                            f'<br><span style="font-size:11px;color:#666">'
+                            f'newer in {html.escape(g["newest_in"])}</span>'
+                        )
+
+                svc_cells = ""
+                for label in labels:
+                    det = g["service_details"].get(label)
+                    if det:
+                        if det.get("is_symlink"):
+                            tgt = det.get("symlink_target") or "—"
+                            svc_cells += (
+                                f'<td class="service-detail">'
+                                f'&#8618; symlink<br>'
+                                f'<span style="font-size:11px;color:#666">'
+                                f'&rarr; {html.escape(str(tgt))}</span></td>'
+                            )
+                        else:
+                            size_val = det.get("size", 0)
+                            size_str = human_size(size_val) if size_val is not None and size_val >= 0 else "—"
+                            svc_cells += (
+                                f'<td class="service-detail">'
+                                f'{size_str}<br>'
+                                f'{html.escape(det["mtime"])}</td>'
+                            )
+                    else:
+                        svc_cells += '<td style="color:#aaa">—</td>'
+
+                extra_note = ""
+                if cm == "mixed_type":
+                    extra_note = (
+                        '<tr class="conflict-row">'
+                        f'<td colspan="{3 + len(labels)}" style="font-size:12px;color:#666;'
+                        f'font-style:italic;padding:4px 10px">'
+                        'One service has a regular file and another has a symlink with the same name. '
+                        'Cannot safely deduplicate without understanding your backup strategy.'
+                        '</td></tr>'
                     )
 
-            svc_cells = ""
-            for label in labels:
-                det = g["service_details"].get(label)
-                if det:
-                    if det.get("is_symlink"):
-                        tgt = det.get("symlink_target") or "—"
-                        svc_cells += (
-                            f'<td class="service-detail">'
-                            f'&#8618; symlink<br>'
-                            f'<span style="font-size:11px;color:#666">'
-                            f'&rarr; {html.escape(str(tgt))}</span></td>'
-                        )
-                    else:
-                        size_val = det.get("size", 0)
-                        size_str = human_size(size_val) if size_val is not None and size_val >= 0 else "—"
-                        svc_cells += (
-                            f'<td class="service-detail">'
-                            f'{size_str}<br>'
-                            f'{html.escape(det["mtime"])}</td>'
-                        )
-                else:
-                    svc_cells += '<td style="color:#aaa">—</td>'
-
-            extra_note = ""
-            if cm == "mixed_type":
-                extra_note = (
-                    '<tr class="conflict-row">'
-                    f'<td colspan="{3 + len(labels)}" style="font-size:12px;color:#666;'
-                    f'font-style:italic;padding:4px 10px">'
-                    'One service has a regular file and another has a symlink with the same name. '
-                    'Cannot safely deduplicate without understanding your backup strategy.'
-                    '</td></tr>'
+                parts.append(
+                    f'<tr class="{row_cls}" id="action-{i}">'
+                    f'<td><strong>{symbol} {html.escape(g["name_orig"])}</strong></td>'
+                    f'<td><code>{html.escape(folder_str)}</code></td>'
+                    f'<td>{"".join(status_parts)}</td>'
+                    f'{svc_cells}</tr>'
+                    + extra_note
                 )
-
+            parts.append("</table>")
+        # Render target_diverged symlinks in Section 4
+        if diverged_symlinks:
+            parts.append('<h3>Diverged Symlinks</h3>')
             parts.append(
-                f'<tr class="{row_cls}" id="action-{i}">'
-                f'<td><strong>{symbol} {html.escape(g["name_orig"])}</strong></td>'
-                f'<td><code>{html.escape(folder_str)}</code></td>'
-                f'<td>{"".join(status_parts)}</td>'
-                f'{svc_cells}</tr>'
-                + extra_note
+                '<p>These symlinks point to different targets across services. '
+                'Review before deleting to avoid losing references.</p>'
             )
-        parts.append("</table>")
+            for sym in sorted(diverged_symlinks, key=lambda x: x["rel_path"]):
+                parts.append(
+                    f'<div class="conflict-row">'
+                    f'<span class="sym-symlink">&#8618;</span> '
+                    f'<strong>{html.escape(sym["name_orig"])}</strong>'
+                    f'<span style="color:#888;margin-left:8px">{html.escape(sym.get("folder", ""))}</span>'
+                    f'</div>'
+                )
+                parts.append('<table>')
+                parts.append('<tr><th>Service</th><th>Symlink Target</th></tr>')
+                for label, target in sym.get("symlink_targets", {}).items():
+                    target_str = html.escape(str(target)) if target else '<em>unresolvable</em>'
+                    parts.append(f'<tr><td>{html.escape(label)}</td><td><code>{target_str}</code></td></tr>')
+                parts.append('</table>')
 
     # ── section 3: folder structure analysis ──
     fc_list        = result["folder_comparisons"]
