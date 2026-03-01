@@ -422,5 +422,43 @@ class TestSymlinkAnalysis(unittest.TestCase):
         self.assertEqual(sym.get("symlink_status"), "target_identical")
 
 
+    def test_mixed_type_goes_to_conflict_groups(self):
+        """A symlink in one service and a regular file in another with the same name → conflict_groups."""
+        dir_a = Path(self.tmp) / "svc_a"
+        dir_b = Path(self.tmp) / "svc_b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        # Regular file in A
+        make_file(dir_a, "item.txt", b"content")
+
+        # Symlink in B pointing to A's file
+        target = dir_a / "item.txt"
+        (dir_b / "item.txt").symlink_to(target)
+
+        result = cda.analyze(
+            [("SvcA", dir_a), ("SvcB", dir_b)],
+            mtime_fuzz=5.0,
+            use_checksum=True,
+            skip_hidden=True
+        )
+
+        # item.txt must be in conflict_groups (mixed_type), not duplicate_groups or symlinks
+        conflicts = [c for c in result["conflict_groups"] if c["name_orig"] == "item.txt"]
+        self.assertGreater(len(conflicts), 0)
+        self.assertEqual(conflicts[0]["content_match"], "mixed_type")
+
+        # Verify service_details exists and has entries for both services
+        self.assertIn("service_details", conflicts[0])
+        self.assertIn("SvcA", conflicts[0]["service_details"])
+        self.assertIn("SvcB", conflicts[0]["service_details"])
+
+        # Not in duplicate_groups or symlinks
+        dups = [d for d in result["duplicate_groups"] if d["name_orig"] == "item.txt"]
+        self.assertEqual(len(dups), 0)
+        syms = [s for s in result["symlinks"] if s["name_orig"] == "item.txt"]
+        self.assertEqual(len(syms), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
