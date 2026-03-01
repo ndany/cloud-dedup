@@ -19,9 +19,28 @@ A table showing pairwise duplicate counts (e.g. how many files appear in both Go
 
 Also shows the number of files that are **unique** to each service (i.e. not duplicated anywhere).
 
-### Section 3: Duplicate Files
+### Section 3: Folder Structure Analysis
 
-A row per confirmed duplicate group. Columns:
+Stat cards showing counts of identical / subset-superset / overlap folders, then three sub-tables:
+
+- **Identical folders** — folder path, services present, file count
+- **Subset/superset folders** — which service has extra files and how many
+- **Overlapping folders** — for each service, what files are exclusive to it
+
+### Section 4: Files Requiring Action
+
+Files that share a name and size across services but have **different content** (i.e. `content_match = "different"`). Sorted by age gap (largest first). Columns:
+
+| Column | Description |
+|---|---|
+| File | Filename |
+| Folder | Relative folder path |
+| Status | `different · diverged` (timestamps differ) or `different · phantom` (timestamps agree but content differs) |
+| Per-service columns | Size, modification timestamp, and MD5 hash for each service |
+
+### Section 5: Duplicate Files
+
+A row per confirmed duplicate group (files with `content_match = identical` or `unverified`). Columns:
 
 | Column | Description |
 |---|---|
@@ -29,28 +48,7 @@ A row per confirmed duplicate group. Columns:
 | Folder | Relative folder path within the directory |
 | Size | Human-readable file size |
 | Found in | Which services contain this file |
-| Match | `exact` or `likely` — see [how-it-works.md](how-it-works.md) |
-| Version | `same` (timestamps agree) or `diverged` (timestamps differ — row highlighted yellow) |
-
-### Section 4: Version-Diverged Files
-
-A filtered view showing only the files from Section 3 where version status is `diverged`. Sorted by age gap (largest first). Columns:
-
-| Column | Description |
-|---|---|
-| File | Filename |
-| Path | Relative folder path |
-| Newest version in | Which service holds the most recently modified copy |
-| Age gap (days) | Days between the oldest and newest copy |
-| Copy dates | Modification timestamp of each copy |
-
-### Section 5: Folder Structure Analysis
-
-Stat cards showing counts of identical / subset-superset / overlap folders, then three sub-tables:
-
-- **Identical folders** — folder path, services present, file count
-- **Subset/superset folders** — which service has extra files and how many
-- **Overlapping folders** — for each service, what files are exclusive to it
+| Match | Combined `content_match · version_status` badge, e.g. `identical · same`, `identical · diverged`, `unverified · same` |
 
 ---
 
@@ -76,10 +74,10 @@ Stat cards showing counts of identical / subset-superset / overlap folders, then
       "size": 990208,
       "matches": {
         "Google Drive": { "rel_path": "...", "name": "...", "size": 990208, "mtime": 1234567890.0 },
-        "Dropbox":      { ... },
-        "OneDrive":     { ... }
+        "Dropbox":      { "..." : "..." },
+        "OneDrive":     { "..." : "..." }
       },
-      "confidence": "exact",
+      "content_match": "identical",
       "version_status": "same",
       "newest_in": null,
       "age_difference_days": 0.0,
@@ -87,6 +85,21 @@ Stat cards showing counts of identical / subset-superset / overlap folders, then
         "Google Drive": "2021-03-15 18:42 UTC",
         "Dropbox":      "2021-03-15 18:42 UTC",
         "OneDrive":     "2021-03-15 18:42 UTC"
+      }
+    }
+  ],
+  "conflict_groups": [
+    {
+      "rel_path": "Documents/budget.xlsx",
+      "name_orig": "budget.xlsx",
+      "size": 24576,
+      "content_match": "different",
+      "version_status": "diverged",
+      "newest_in": "Dropbox",
+      "age_difference_days": 3.2,
+      "service_details": {
+        "Google Drive": { "size": 24576, "mtime": 1234567800.0, "md5": "abc123..." },
+        "Dropbox":      { "size": 24576, "mtime": 1234844600.0, "md5": "def456..." }
       }
     }
   ],
@@ -116,6 +129,13 @@ Stat cards showing counts of identical / subset-superset / overlap folders, then
       }
     }
   ],
+  "safe_to_delete_roots": [
+    {
+      "folder_path": "Photos/2020",
+      "subtree_status": "identical",
+      "total_files": 42
+    }
+  ],
   "relationship_counts": {
     "identical": 48,
     "overlap": 6,
@@ -126,16 +146,35 @@ Stat cards showing counts of identical / subset-superset / overlap folders, then
 }
 ```
 
-### `duplicate_groups[].confidence`
+### `duplicate_groups[].content_match` and `duplicate_groups[].version_status`
+
+The `confidence` field from earlier versions has been replaced by two independent fields:
+
+**`content_match`**
 
 | Value | Meaning |
 |---|---|
-| `exact` | Name + size + mtime all agree (or MD5 confirmed) |
-| `likely` | Name + size agree; mtime differs but MD5 matches (or checksums skipped) |
+| `identical` | MD5 checksums confirmed the file content matches across services |
+| `unverified` | `--no-checksum` was used; name + size agree but content was not verified |
 
-### `duplicate_groups[].version_status`
+**`version_status`**
 
 | Value | Meaning |
 |---|---|
 | `same` | All copies have mtimes within the fuzz window |
 | `diverged` | At least one copy has a mtime more than `mtime_fuzz` seconds away from another |
+
+### `conflict_groups`
+
+Array of file groups where `content_match = "different"` — files that share a name and size but have differing MD5 checksums. These are separated from `duplicate_groups` because they require manual review before any deletion.
+
+Each entry mirrors the shape of `duplicate_groups` entries but includes `service_details` with per-service `size`, `mtime`, and `md5` fields, and always has `content_match = "different"`.
+
+| `version_status` value | Meaning |
+|---|---|
+| `diverged` | Content differs and timestamps also differ — keep the newer copy |
+| `phantom` | Content differs despite matching timestamps — keep both copies |
+
+### `safe_to_delete_roots`
+
+Array of folder paths whose entire subtree (all descendant folders) is classified `identical` across all compared services. These are the highest-level folders safe to delete — subfolders are omitted since they are already covered by their ancestor.

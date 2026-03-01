@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""
+r"""
 cloud_duplicate_analyzer.py
 ────────────────────────────────────────────────────────────────────────────
 Scans two or more directories and produces an HTML report describing:
 
   • How many files each directory contains
-  • Which files are duplicated across directories (by name+size, name+mtime,
-    or MD5 checksum for ambiguous cases)
-  • Whether duplicate copies have diverged (different modification dates)
-  • How folder sub-trees relate: identical / subset / superset / overlap
+  • Which files are duplicated across directories (confirmed by MD5 checksum)
+  • Content match: identical (MD5 confirmed) | different (conflict) | unverified (--no-checksum)
+  • Version status: same (mtime agrees) | diverged (mtime differs) | phantom (mtime agrees but content differs)
+  • How folder sub-trees relate, with subtree rollup and safe-to-delete identification
 
 Usage
 ─────
@@ -311,6 +311,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
     # Build lookup for folder tree renderer (Task 6):
     # (name_lower, folder_str) → {content_match, version_status, conflict_index}
     _file_classifications = {}
+    conflict_groups.sort(key=lambda g: g["rel_path"])
     for i, g in enumerate(conflict_groups):
         rp = Path(g["rel_path"])
         folder = str(rp.parent) if str(rp.parent) != "." else "(root)"
@@ -426,7 +427,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
 
         # Pairwise shared (not in all)
         for la, lb in combinations(present, 2):
-            in_pair = sets_here[la] & sets_here[lb] - in_all
+            in_pair = (sets_here[la] & sets_here[lb]) - in_all
             if in_pair:
                 details[f"{la}+{lb}"] = sorted(in_pair)
 
@@ -557,6 +558,7 @@ tr:nth-child(even) td { background: #f4f8fc; }
 .badge { display:inline-block; padding:2px 8px; border-radius:12px;
          font-size:11px; font-weight:bold; }
 .badge-identical  { background:#d4edda; color:#155724; }
+.badge-unverified { background:#e2e3e5; color:#383d41; }
 .badge-overlap    { background:#fff3cd; color:#856404; }
 .badge-subset     { background:#d1ecf1; color:#0c5460; }
 .badge-superset   { background:#d1ecf1; color:#0c5460; }
@@ -664,22 +666,20 @@ Comparing {n} directories</p>
         parts.append("<p>No duplicate files found.</p>")
     else:
         parts.append('<table><tr><th>File</th><th>Folder</th><th>Size</th>'
-                     '<th>Found in</th><th>Match</th><th>Version</th></tr>')
+                     '<th>Found in</th><th>Match</th></tr>')
         for g in sorted(dups, key=lambda x: x["rel_path"]):
-            row_cls = ' class="warn-row"' if g["version_status"] == "diverged" else ""
             found_in = ", ".join(g["matches"].keys())
-            version_cell = badge("diverged") if g["version_status"] == "diverged" else badge("same")
-            match_cell = badge(g.get("content_match", g.get("confidence", "")))
+            match_label = f'{g.get("content_match", "unverified")} · {g.get("version_status", "same")}'
+            match_cell  = badge(match_label, g.get("content_match", "unverified"))
             # folder = parent of rel_path
             rp = Path(g["rel_path"])
             folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
-            parts.append(f'<tr{row_cls}>'
+            parts.append(f'<tr>'
                          f'<td>{html.escape(g["name_orig"])}</td>'
                          f'<td><code>{html.escape(folder_str)}</code></td>'
                          f'<td style="white-space:nowrap">{human_size(g["size"])}</td>'
                          f'<td>{html.escape(found_in)}</td>'
-                         f'<td>{match_cell}</td>'
-                         f'<td>{version_cell}</td></tr>')
+                         f'<td>{match_cell}</td></tr>')
         parts.append("</table>")
 
     # ── section 4: files requiring action ──
@@ -933,7 +933,9 @@ def main():
     p.add_argument("--mtime-fuzz", type=float, default=5,
                    help="Seconds tolerance for mtime comparison (default: 5)")
     p.add_argument("--no-checksum", action="store_true",
-                   help="Disable MD5 checksum verification")
+                   help="Skip MD5 checksums. Matches are labelled 'unverified' rather than "
+                        "'identical'. The 'phantom' conflict case (same metadata, different "
+                        "content) cannot be detected without checksums.")
     p.add_argument("--include-hidden", action="store_true",
                    help="Include hidden files and folders (names starting with '.')")
 
@@ -996,9 +998,9 @@ def main():
         print(f"    {pair}: {cnt:,}")
     if len(labels) > 2:
         print(f"    All {len(labels)} services: {result['all_services_count']:,}")
-    divs = [g for g in dups if g["version_status"] == "diverged"]
-    if divs:
-        print(f"\n  ⚠  {len(divs)} file(s) have diverged versions — see Section 4 of report")
+    conflicts = result.get("conflict_groups", [])
+    if conflicts:
+        print(f"\n  ⚠  {len(conflicts)} file(s) require action (different content) — see Section 4 of report")
     rc = result["relationship_counts"]
     print(f"\n  Folder relationships:")
     for rel, cnt in sorted(rc.items()):
