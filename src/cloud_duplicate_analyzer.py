@@ -133,22 +133,41 @@ def scan_directory(root: Path, skip_hidden: bool) -> list[dict]:
             if fname == ".DS_Store":
                 continue
             full = Path(dirpath) / fname
-            try:
-                st = full.stat()
-                size = st.st_size
-                mtime = st.st_mtime
-            except (OSError, PermissionError):
-                size, mtime = 0, 0.0
             rel = full.relative_to(root)
-            records.append({
-                "rel_path": str(rel),
-                "name": fname.lower(),           # lower for case-insensitive match
-                "name_orig": fname,
-                "size": size,
-                "mtime": mtime,
-                "full_path": full,
-                "folder": str(rel.parent),
-            })
+            if full.is_symlink():
+                try:
+                    target = full.resolve()
+                except (OSError, PermissionError):
+                    target = None
+                records.append({
+                    "rel_path": str(rel),
+                    "name": fname.lower(),
+                    "name_orig": fname,
+                    "size": 0,
+                    "mtime": 0.0,
+                    "full_path": full,
+                    "folder": str(rel.parent),
+                    "is_symlink": True,
+                    "symlink_target": target,
+                })
+            else:
+                try:
+                    st = full.stat()
+                    size = st.st_size
+                    mtime = st.st_mtime
+                except (OSError, PermissionError):
+                    size, mtime = 0, 0.0
+                records.append({
+                    "rel_path": str(rel),
+                    "name": fname.lower(),           # lower for case-insensitive match
+                    "name_orig": fname,
+                    "size": size,
+                    "mtime": mtime,
+                    "full_path": full,
+                    "folder": str(rel.parent),
+                    "is_symlink": False,
+                    "symlink_target": None,
+                })
     return records
 
 

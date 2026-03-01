@@ -242,5 +242,46 @@ class TestAnalyzeIntegration(unittest.TestCase):
         self.assertIn("mtime", g["service_details"]["A"])
 
 
+class TestSymlinkDetection(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil; shutil.rmtree(self.tmp)
+
+    def test_symlink_detection(self):
+        """Verify symlinks are detected and their targets are stored."""
+        # Create a regular file
+        regular_file = make_file(self.tmp, "a/regular.txt", b"content")
+
+        # Create a symlink pointing to it
+        symlink_path = Path(self.tmp) / "b" / "link.txt"
+        symlink_path.parent.mkdir(parents=True, exist_ok=True)
+        symlink_path.symlink_to(regular_file)
+
+        # Scan directory with symlink
+        records = cda.scan_directory(Path(self.tmp) / "b", skip_hidden=False)
+
+        # Find the symlink record
+        symlink_record = next((r for r in records if r["name_orig"] == "link.txt"), None)
+
+        # Verify symlink is detected and target is stored
+        assert symlink_record is not None
+        assert symlink_record.get("is_symlink") == True
+        assert symlink_record.get("symlink_target") is not None
+        assert str(regular_file) in str(symlink_record.get("symlink_target"))
+
+    def test_regular_file_is_symlink_false(self):
+        """Verify regular files have is_symlink=False."""
+        make_file(self.tmp, "a/regular.txt", b"content")
+
+        records = cda.scan_directory(Path(self.tmp) / "a", skip_hidden=False)
+
+        regular_record = next((r for r in records if r["name_orig"] == "regular.txt"), None)
+
+        assert regular_record is not None
+        assert regular_record.get("is_symlink") == False
+
+
 if __name__ == "__main__":
     unittest.main()
