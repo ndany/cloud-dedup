@@ -23,27 +23,25 @@ An index is built for each directory keyed on `(lowercase_name, size_in_bytes)`.
 
 Any key that appears in two or more directories is a candidate duplicate group.
 
-### Stage 2 — Confidence Scoring
+### Stage 2 — Content and Version Classification
 
-Candidates are confirmed with the following rules, applied in order:
+Every candidate pair is classified on two independent dimensions:
 
-| Condition | Result |
-|---|---|
-| Same name + same size + `mtime` within fuzz window | **exact** match |
-| Same name + same size + `mtime` differs + MD5 checksums match | **likely** match (same content, sync tool changed the timestamp) |
-| Same name + same size + `mtime` differs + checksums skipped | **likely** match (assumed — use `--no-checksum` consciously) |
-| Same name + size is 0 | **exact** match (empty files) |
-| Different size | No match |
+| content_match | version_status | Meaning | Action |
+|---|---|---|---|
+| `identical` | `same` | MD5 match + mtime within fuzz | safe to delete either copy |
+| `identical` | `diverged` | MD5 match + mtime differs | safe (sync timestamp artifact) |
+| `different` | `diverged` | MD5 mismatch + mtime differs | keep newer copy |
+| `different` | `phantom` | MD5 mismatch + mtime within fuzz | keep both — dangerous |
+| `unverified` | `same` | `--no-checksum`, mtime within fuzz | assumed match |
+| `unverified` | `diverged` | `--no-checksum`, mtime differs | assumed match, may be stale |
 
-The fuzz window defaults to 5 seconds and can be changed with `--mtime-fuzz`. Some sync tools (notably OneDrive) round timestamps to the nearest second, which can cause sub-second differences between otherwise identical files.
+MD5 checksums are computed for **all** name+size candidates. Use `--no-checksum` to skip checksums for speed; matches will be labelled `unverified` and the `phantom` case cannot be detected.
 
-MD5 checksums are only computed when name and size match but modification times differ — so the common case (many identical files with identical mtimes) does not touch disk content at all.
+Files with `content_match = identical` or `unverified` go into the **duplicate groups** (Section 5).
+Files with `content_match = different` go into **conflict groups** (Section 4 — Files Requiring Action).
 
-## Version Divergence
-
-After a duplicate group is confirmed, the modification times of all copies are compared. If the spread between the oldest and newest copy exceeds the fuzz window, the group is marked **diverged** and the service holding the newest copy is recorded.
-
-This surfaces files that were edited in one location and not synced to others — the most important information when deciding which copy to keep before deleting duplicates.
+Empty files (size == 0) are always classified `(identical, same)` regardless of mtime.
 
 ## Folder Analysis
 
@@ -56,6 +54,16 @@ For every folder path that appears in two or more directories, the set of filena
 | **overlap** | Each service has some files the others don't; neither is a subset of the other |
 
 Note: folder analysis is based on filenames only (not file content), so two folders can be classified as "identical" if their file names and counts match even if the content has diverged. Cross-reference with Section 3 (duplicate file list) for content-confirmed matches.
+
+## Subtree Rollups
+
+After leaf-level folder comparison, each folder is assigned a `subtree_status` based on all its descendant folders:
+
+- **identical** — every folder in the subtree has identical file sets across all services
+- **partial** — some folders match, others don't
+- **overlap** — at least one folder has files unique to each service
+
+Folders with `subtree_status = identical` are candidates for safe deletion. The report surfaces only the **highest-level** identical roots — deleting `Photos/` covers all subfolders, so `Photos/2020/` is not listed separately.
 
 ## Performance Notes
 
