@@ -842,6 +842,7 @@ Comparing {n} directories</p>
                 "same":       sum(1 for g in all_in_pair  if g["version_status"] == "same"),
                 "diverged":   sum(1 for g in all_in_pair  if g["version_status"] == "diverged"),
                 "phantom":    sum(1 for g in all_in_pair  if g["version_status"] == "phantom"),
+                "conflict":   sum(1 for g in all_in_pair  if g["version_status"] == "conflict"),
                 "total":      len(all_in_pair),
             }
 
@@ -874,6 +875,10 @@ Comparing {n} directories</p>
         if ps["phantom"]:
             version_parts.append(
                 f'<span style="color:#dc3545">{ps["phantom"]:,} phantom</span>'
+            )
+        if ps["conflict"]:
+            version_parts.append(
+                f'<span style="color:#6f42c1">{ps["conflict"]:,} mixed-type</span>'
             )
         if ps["same"]:
             version_parts.append(
