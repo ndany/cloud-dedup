@@ -123,7 +123,12 @@ def fmt_ts(ts: float) -> str:
 # ─────────────────────────────────────────────────────── scanning ──
 
 def scan_directory(root: Path, skip_hidden: bool) -> list[dict]:
-    """Return a list of file records with relative path, name, size, mtime."""
+    """Return a list of file records for all files under root.
+
+    Regular file records contain: rel_path, name, name_orig, size, mtime, full_path, folder, is_symlink=False, symlink_target=None.
+    Symlink records contain: rel_path, name, name_orig, size=-1, mtime=0.0, full_path, folder, is_symlink=True, symlink_target (str or None).
+    Symlinks are detected with Path.is_symlink() and compared by target path, not content.
+    """
     records = []
     for dirpath, dirnames, filenames in os.walk(root):
         if skip_hidden:
@@ -143,12 +148,12 @@ def scan_directory(root: Path, skip_hidden: bool) -> list[dict]:
                     "rel_path": str(rel),
                     "name": fname.lower(),
                     "name_orig": fname,
-                    "size": 0,
+                    "size": -1,  # Sentinel: symlinks have no meaningful size; -1 avoids colliding with real empty files
                     "mtime": 0.0,
                     "full_path": full,
                     "folder": str(rel.parent),
                     "is_symlink": True,
-                    "symlink_target": target,
+                    "symlink_target": str(target) if target is not None else None,
                 })
             else:
                 try:

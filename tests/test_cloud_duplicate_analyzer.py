@@ -268,8 +268,31 @@ class TestSymlinkDetection(unittest.TestCase):
         # Verify symlink is detected and target is stored
         assert symlink_record is not None
         assert symlink_record.get("is_symlink") == True
+        # size must be -1 (sentinel) — must not be 0 to avoid colliding with real empty files
+        assert symlink_record.get("size") == -1
+        # symlink_target must be a str (not a Path object), for JSON serialisation safety
         assert symlink_record.get("symlink_target") is not None
-        assert str(regular_file) in str(symlink_record.get("symlink_target"))
+        assert isinstance(symlink_record.get("symlink_target"), str)
+        assert str(regular_file) in symlink_record.get("symlink_target")
+
+    def test_dangling_symlink_detection(self):
+        """Verify dangling symlinks (target doesn't exist) are handled gracefully."""
+        # Create a symlink pointing to a non-existent target
+        symlink_path = Path(self.tmp) / "scan_dir" / "dangling.txt"
+        symlink_path.parent.mkdir(parents=True, exist_ok=True)
+        symlink_path.symlink_to(Path(self.tmp) / "nonexistent_target.txt")
+
+        # Must not crash
+        records = cda.scan_directory(Path(self.tmp) / "scan_dir", skip_hidden=False)
+
+        dangling = next((r for r in records if r["name_orig"] == "dangling.txt"), None)
+        assert dangling is not None
+        assert dangling.get("is_symlink") == True
+        assert dangling.get("size") == -1
+        # symlink_target is either None (truly unresolvable) or a str (macOS resolve() may
+        # return an absolute path even for a dangling symlink — both outcomes are acceptable)
+        target = dangling.get("symlink_target")
+        assert target is None or isinstance(target, str)
 
     def test_regular_file_is_symlink_false(self):
         """Verify regular files have is_symlink=False."""
