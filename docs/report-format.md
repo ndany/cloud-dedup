@@ -54,7 +54,7 @@ Files that share a name across services but require manual review before deletio
 - Symlinks with `version_status = "target_diverged"` — both services have a symlink at the same path but pointing to different targets (symbol: ↪⚠).
 - Mixed-type entries with `content_match = "mixed_type"` — one service has a regular file, another has a symlink at the same name (symbol: ↪⚠).
 
-Sorted by age gap (largest first). Columns:
+Sorted by relative path. Columns:
 
 | Column | Description |
 |---|---|
