@@ -191,8 +191,16 @@ def classify_pair(a: dict, b: dict, mtime_fuzz: float, use_checksum: bool):
 
     Returns (content_match, version_status) or None if name/size don't match.
 
-      content_match : 'identical' | 'different' | 'unverified'
-      version_status: 'same'      | 'diverged'  | 'phantom'
+      content_match : 'identical' | 'different' | 'unverified' | 'symlink' | 'mixed_type'
+      version_status: 'same'      | 'diverged'  | 'phantom'    | 'target_identical' | 'target_diverged' | 'conflict'
+
+    Special cases for symlinks:
+      ("symlink", "target_identical") — both records are symlinks pointing to the same
+          resolved target path. Returned only when both targets are non-None.
+      ("symlink", "target_diverged")  — both records are symlinks but their targets
+          differ, or either target is None (unresolvable / dangling symlink).
+      ("mixed_type", "conflict")      — one record is a symlink, the other is a
+          regular file; the pair cannot be meaningfully compared.
 
     'phantom' means mtime agrees but MD5 differs — the most dangerous case:
     the file looks like a safe duplicate but the content is actually different.
@@ -213,7 +221,7 @@ def classify_pair(a: dict, b: dict, mtime_fuzz: float, use_checksum: bool):
         # Both are symlinks: compare by target path string
         a_target = a.get("symlink_target")
         b_target = b.get("symlink_target")
-        if a_target == b_target:
+        if a_target is not None and b_target is not None and a_target == b_target:
             return ("symlink", "target_identical")
         else:
             return ("symlink", "target_diverged")

@@ -355,6 +355,21 @@ class TestSymlinkDetection(unittest.TestCase):
         result = cda.classify_pair(rec_symlink, rec_file, mtime_fuzz=5.0, use_checksum=True)
         self.assertEqual(result, ("mixed_type", "conflict"))
 
+    def test_symlink_both_unresolvable(self):
+        """Two symlinks with None targets (both dangling) are not considered identical."""
+        rec_a = {
+            "name": "link.txt", "name_orig": "link.txt",
+            "is_symlink": True, "symlink_target": None,
+            "folder": "a", "size": -1, "mtime": 0.0
+        }
+        rec_b = {
+            "name": "link.txt", "name_orig": "link.txt",
+            "is_symlink": True, "symlink_target": None,
+            "folder": "b", "size": -1, "mtime": 0.0
+        }
+        result = cda.classify_pair(rec_a, rec_b, mtime_fuzz=5.0, use_checksum=True)
+        self.assertEqual(result, ("symlink", "target_diverged"))
+
 
 if __name__ == "__main__":
     unittest.main()
