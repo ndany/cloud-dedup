@@ -311,7 +311,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         # Precedence: different > unverified > identical
         # version precedence: phantom > diverged > same
         content_rank = {"identical": 0, "unverified": 1, "different": 2}
-        version_rank = {"same": 0, "diverged": 1, "phantom": 2}
+        version_rank = {"same": 0, "diverged": 1, "phantom": 2, "conflict": 3}
         group_content = "identical"
         group_version = "same"
         all_matched = True
@@ -735,19 +735,19 @@ td    { padding: 7px 10px; border: 1px solid #dde; vertical-align: top; }
 tr:nth-child(even) td { background: #f4f8fc; }
 .badge { display:inline-block; padding:2px 8px; border-radius:12px;
          font-size:11px; font-weight:bold; }
-.badge-identical  { background:#d4edda; color:#155724; }
-.badge-unverified { background:#e2e3e5; color:#383d41; }
+.badge-identical  { background:#d4edda; color:#155724; }   /* green  — safe   */
+.badge-same       { background:#d4edda; color:#155724; }   /* green  — safe   */
+.badge-diverged   { background:#fff3cd; color:#856404; }   /* amber  — review */
+.badge-unverified { background:#fff3cd; color:#856404; }   /* amber  — review */
+.badge-phantom    { background:#f8d7da; color:#721c24; }   /* red    — unsafe */
+.badge-different  { background:#f8d7da; color:#721c24; }   /* red    — unsafe */
 .badge-overlap    { background:#fff3cd; color:#856404; }
 .badge-subset     { background:#d1ecf1; color:#0c5460; }
 .badge-superset   { background:#d1ecf1; color:#0c5460; }
-.badge-diverged   { background:#f8d7da; color:#721c24; }
-.badge-same       { background:#d4edda; color:#155724; }
 .action-row    { }
 .phantom-row td { background:#fff8e1 !important; }
 .conflict-row td { background:#fff0f0 !important; }
 .service-detail { font-size:12px; line-height:1.6; }
-.badge-phantom  { background:#fff3cd; color:#856404; }
-.badge-different { background:#f8d7da; color:#721c24; }
 .stat-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr));
              gap:16px; margin:20px 0; }
 .stat-card { background:#f0f6fc; border:1px solid #c5d8ec; border-radius:8px;
@@ -775,7 +775,7 @@ code { background:#f0f0f0; padding:1px 4px; border-radius:3px; font-size:12px; }
 .sym-dp { color: #fd7e14; }
 .sym-uniq { color: #ff9900; font-weight: bold; }
 .sym-symlink { color: #0066cc; font-weight: bold; }
-.badge-symlink { background-color: #e6f2ff; color: #0066cc; border: 1px solid #0066cc; }
+.badge-symlink { background:#fff3cd; color:#856404; }   /* amber — review */
 """
 
 def badge(text, cls=None):
@@ -787,7 +787,8 @@ def render_html(result: dict) -> str:
     labels = result["labels"]
     n = len(labels)
     dups = result["duplicate_groups"]
-    divs = [g for g in dups if g["version_status"] == "diverged"]
+    divs = [g for g in dups if g["version_status"] == "diverged"
+            and g["content_match"] in ("identical", "unverified")]
     total = sum(result["total_files"].values())
 
     parts = [f"""<!DOCTYPE html>
@@ -820,184 +821,111 @@ Comparing {n} directories</p>
 
     # ── section 2: duplicate summary ──
     parts.append("<h2>2. Duplicate File Summary</h2>")
-    parts.append('<table><tr><th>Service Pair</th><th>Duplicate Files</th></tr>')
-    for pair, cnt in result["pairwise_counts"].items():
-        parts.append(f'<tr><td>{html.escape(pair)}</td><td>{cnt:,}</td></tr>')
+
+    # Compute per-pair match/version breakdowns
+    pair_stats: dict = {}
+    for i, la in enumerate(labels):
+        for lb in labels[i + 1:]:
+            pair_key = f"{la}↔{lb}"
+            dup_in_pair = [
+                g for g in dups
+                if la in g["matches"] and lb in g["matches"]
+            ]
+            conf_in_pair = [
+                g for g in result.get("conflict_groups", [])
+                if la in g.get("service_details", {}) and lb in g.get("service_details", {})
+            ]
+            all_in_pair = dup_in_pair + conf_in_pair
+            pair_stats[pair_key] = {
+                "identical":  sum(1 for g in dup_in_pair  if g["content_match"] == "identical"),
+                "unverified": sum(1 for g in dup_in_pair  if g["content_match"] == "unverified"),
+                "different":  len(conf_in_pair),
+                "same":       sum(1 for g in all_in_pair  if g["version_status"] == "same"),
+                "diverged":   sum(1 for g in all_in_pair  if g["version_status"] == "diverged"),
+                "phantom":    sum(1 for g in all_in_pair  if g["version_status"] == "phantom"),
+                "conflict":   sum(1 for g in all_in_pair  if g["version_status"] == "conflict"),
+                "total":      len(all_in_pair),
+            }
+
+    parts.append(
+        '<table>'
+        '<tr>'
+        '<th>Service Pair</th>'
+        '<th style="background:#c8e6c9;border-left:3px solid #81c784">Match Type</th>'
+        '<th style="background:#bbdefb;border-left:3px solid #64b5f6">Version Status</th>'
+        '<th>Total</th>'
+        '</tr>'
+    )
+    _B = 'display:inline-block;padding:2px 8px;border-radius:10px;white-space:nowrap;font-size:12px'
+    for pair_key, ps in pair_stats.items():
+        match_parts = []
+        if ps["identical"]:
+            match_parts.append(
+                f'<span style="{_B};background:#d4edda;color:#155724;font-weight:bold">{ps["identical"]:,} identical</span>'
+            )
+        if ps["unverified"]:
+            match_parts.append(
+                f'<span style="{_B};background:#fff3cd;color:#856404">{ps["unverified"]:,} unverified</span>'
+            )
+        if ps["different"]:
+            match_parts.append(
+                f'<span style="{_B};background:#f8d7da;color:#721c24;font-weight:bold">{ps["different"]:,} different</span>'
+            )
+        if not match_parts:
+            match_parts.append('<span style="color:#aaa">—</span>')
+
+        version_parts = []
+        if ps["phantom"]:
+            version_parts.append(
+                f'<span style="{_B};background:#f8d7da;color:#721c24;font-weight:bold">{ps["phantom"]:,} phantom</span>'
+            )
+        if ps["diverged"]:
+            version_parts.append(
+                f'<span style="{_B};background:#fff3cd;color:#856404">{ps["diverged"]:,} diverged</span>'
+            )
+        if ps["conflict"]:
+            version_parts.append(
+                f'<span style="{_B};background:#f8d7da;color:#721c24;font-weight:bold">{ps["conflict"]:,} mixed-type</span>'
+            )
+        if ps["same"]:
+            version_parts.append(
+                f'<span style="{_B};background:#d4edda;color:#155724">{ps["same"]:,} same</span>'
+            )
+        if not version_parts:
+            version_parts.append('<span style="color:#aaa">—</span>')
+
+        row_bg = (
+            '#fdecea' if ps["phantom"] > 0 or ps["conflict"] > 0 else
+            '#fffde7' if ps["diverged"] > 0 else
+            ''
+        )
+        row_style = f' style="background:{row_bg}"' if row_bg else ''
+        parts.append(
+            f'<tr{row_style}>'
+            f'<td>{html.escape(pair_key)}</td>'
+            f'<td style="border-left:3px solid #81c784">{" ".join(match_parts)}</td>'
+            f'<td style="border-left:3px solid #64b5f6">{" ".join(version_parts)}</td>'
+            f'<td>{ps["total"]:,}</td>'
+            f'</tr>'
+        )
+
     if n > 2:
-        parts.append(f'<tr><td><strong>All {n} services</strong></td>'
-                     f'<td><strong>{result["all_services_count"]:,}</strong></td></tr>')
-    total_dup_instances = sum(result["pairwise_counts"].values())
-    parts.append(f'<tr><td><em>Unique files</em></td>')
-    unique_str = " | ".join(
-        f'{html.escape(l)}: {result["unique_counts"][l]:,}' for l in labels)
-    parts.append(f'<td><em>{unique_str}</em></td></tr>')
+        parts.append(
+            f'<tr><td><strong>All {n} services</strong></td>'
+            f'<td colspan="2" style="border-left:3px solid #81c784"><em>(pairwise breakdown only)</em></td>'
+            f'<td><strong>{result["all_services_count"]:,}</strong></td></tr>'
+        )
+
+    unique_str = " &nbsp;|&nbsp; ".join(
+        f'{html.escape(l)}: {result["unique_counts"][l]:,} unique' for l in labels
+    )
+    parts.append(f'<tr><td colspan="4"><em>{unique_str}</em></td></tr>')
     parts.append("</table>")
-    parts.append(f"<p>Duplicate matching used: same filename + same size, "
-                 f"or same filename + modification time within "
-                 f"{result.get('mtime_fuzz', 5)} seconds. "
-                 f"MD5 checksums were computed for all candidate pairs.</p>")
-
-    # ── section 5: duplicate file list ──
-    parts.append(f"<h2>5. Duplicate Files ({len(dups)} confirmed)</h2>")
-    if not dups:
-        parts.append("<p>No duplicate files found.</p>")
-    else:
-        parts.append('<table><tr><th>File</th><th>Folder</th><th>Size</th>'
-                     '<th>Found in</th><th>Match</th></tr>')
-        for g in sorted(dups, key=lambda x: x["rel_path"]):
-            found_in = ", ".join(g["matches"].keys())
-            match_label = f'{g.get("content_match", "unverified")} · {g.get("version_status", "same")}'
-            match_cell  = badge(match_label, g.get("content_match", "unverified"))
-            # folder = parent of rel_path
-            rp = Path(g["rel_path"])
-            folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
-            parts.append(f'<tr>'
-                         f'<td>{html.escape(g["name_orig"])}</td>'
-                         f'<td><code>{html.escape(folder_str)}</code></td>'
-                         f'<td style="white-space:nowrap">{human_size(g["size"])}</td>'
-                         f'<td>{html.escape(found_in)}</td>'
-                         f'<td>{match_cell}</td></tr>')
-        parts.append("</table>")
-
-    # Symlinks subsection
-    symlinks_data = result.get("symlinks", [])
-    if symlinks_data:
-        parts.append(f'<h3>Symlinks ({len(symlinks_data)})</h3>')
-        parts.append(
-            '<table><tr><th>Name</th><th>Target</th><th>Status</th><th>Services</th></tr>'
-        )
-        for sym in sorted(symlinks_data, key=lambda x: x["rel_path"]):
-            targets = sym.get("symlink_targets", {})
-            target_display = next((v for v in targets.values() if v), "—")
-            status = sym.get("symlink_status", "unknown")
-            services_list = sym.get("services", [])
-            services = ", ".join(services_list)
-            parts.append(
-                f'<tr>'
-                f'<td><strong>&#8618; {html.escape(sym["name_orig"])}</strong><br>'
-                f'<small style="color:#888">{html.escape(sym.get("folder", ""))}</small></td>'
-                f'<td><code style="font-size:11px">'
-                f'{html.escape(str(target_display))}</code></td>'
-                f'<td>{badge(f"symlink · {status}", "symlink")}</td>'
-                f'<td>{html.escape(services)}</td>'
-                f'</tr>'
-            )
-        parts.append('</table>')
-
-    # ── section 4: files requiring action ──
-    conflicts = result.get("conflict_groups", [])
-    diverged_symlinks = [s for s in result.get("symlinks", []) if s.get("symlink_status") == "target_diverged"]
-    total_action_items = len(conflicts) + len(diverged_symlinks)
-    parts.append(f'<h2 id="s4">4. Files Requiring Action ({total_action_items})</h2>')
-    if not conflicts and not diverged_symlinks:
-        parts.append(
-            "<p>No content conflicts found — all matched files have identical content "
-            "(or matching was skipped with <code>--no-checksum</code>).</p>"
-        )
-    else:
-        parts.append(
-            "<p>These files share a name and size across services but have "
-            "<strong>different content</strong>. Review each before deleting any copy.</p>"
-            "<p>"
-            "<strong>⚠ different&nbsp;·&nbsp;diverged</strong> — content differs, "
-            "timestamps differ; keep the newer copy.<br>"
-            "<strong>⚡ different&nbsp;·&nbsp;phantom</strong> — content differs despite "
-            "matching timestamps; keep both copies.<br>"
-            "<strong>&#8618; mixed type</strong> — one service has a regular file and "
-            "another has a symlink with the same name.<br>"
-            "<strong>&#8618; target_diverged</strong> — both services have a symlink with "
-            "the same name but pointing to different targets.</p>"
-        )
-        if conflicts:
-            svc_headers = "".join(
-                f'<th>{html.escape(l)}</th>' for l in labels
-            )
-            parts.append(
-                f'<table><tr><th>File</th><th>Folder</th><th>Status</th>{svc_headers}</tr>'
-            )
-            for i, g in enumerate(sorted(conflicts, key=lambda x: x["rel_path"])):
-                rp = Path(g["rel_path"])
-                folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
-                cm = g.get("content_match", "different")
-                vs = g["version_status"]
-                if cm == "mixed_type":
-                    symbol = "&#8618;"
-                    row_cls = "conflict-row"
-                    status_parts = ["mixed&nbsp;type"]
-                else:
-                    symbol = "⚡" if vs == "phantom" else "⚠"
-                    row_cls = "phantom-row" if vs == "phantom" else "conflict-row"
-                    status_parts = [f"different&nbsp;·&nbsp;{html.escape(vs)}"]
-                    if vs == "diverged" and g.get("newest_in"):
-                        status_parts.append(
-                            f'<br><span style="font-size:11px;color:#666">'
-                            f'newer in {html.escape(g["newest_in"])}</span>'
-                        )
-
-                svc_cells = ""
-                for label in labels:
-                    det = g["service_details"].get(label)
-                    if det:
-                        if det.get("is_symlink"):
-                            tgt = det.get("symlink_target") or "—"
-                            svc_cells += (
-                                f'<td class="service-detail">'
-                                f'&#8618; symlink<br>'
-                                f'<span style="font-size:11px;color:#666">'
-                                f'&rarr; {html.escape(str(tgt))}</span></td>'
-                            )
-                        else:
-                            size_val = det.get("size", 0)
-                            size_str = human_size(size_val) if size_val is not None and size_val >= 0 else "—"
-                            svc_cells += (
-                                f'<td class="service-detail">'
-                                f'{size_str}<br>'
-                                f'{html.escape(det["mtime"])}</td>'
-                            )
-                    else:
-                        svc_cells += '<td style="color:#aaa">—</td>'
-
-                extra_note = ""
-                if cm == "mixed_type":
-                    extra_note = (
-                        '<tr class="conflict-row">'
-                        f'<td colspan="{3 + len(labels)}" style="font-size:12px;color:#666;'
-                        f'font-style:italic;padding:4px 10px">'
-                        'One service has a regular file and another has a symlink with the same name. '
-                        'Cannot safely deduplicate without understanding your backup strategy.'
-                        '</td></tr>'
-                    )
-
-                parts.append(
-                    f'<tr class="{row_cls}" id="action-{i}">'
-                    f'<td><strong>{symbol} {html.escape(g["name_orig"])}</strong></td>'
-                    f'<td><code>{html.escape(folder_str)}</code></td>'
-                    f'<td>{"".join(status_parts)}</td>'
-                    f'{svc_cells}</tr>'
-                    + extra_note
-                )
-            parts.append("</table>")
-        # Render target_diverged symlinks in Section 4
-        if diverged_symlinks:
-            parts.append('<h3>Diverged Symlinks</h3>')
-            parts.append(
-                '<p>These symlinks point to different targets across services. '
-                'Review before deleting to avoid losing references.</p>'
-            )
-            for sym in sorted(diverged_symlinks, key=lambda x: x["rel_path"]):
-                parts.append(
-                    f'<div class="conflict-row">'
-                    f'<span class="sym-symlink">&#8618;</span> '
-                    f'<strong>{html.escape(sym["name_orig"])}</strong>'
-                    f'<span style="color:#888;margin-left:8px">{html.escape(sym.get("folder", ""))}</span>'
-                    f'</div>'
-                )
-                parts.append('<table>')
-                parts.append('<tr><th>Service</th><th>Symlink Target</th></tr>')
-                for label, target in sym.get("symlink_targets", {}).items():
-                    target_str = html.escape(str(target)) if target else '<em>unresolvable</em>'
-                    parts.append(f'<tr><td>{html.escape(label)}</td><td><code>{target_str}</code></td></tr>')
-                parts.append('</table>')
+    parts.append(
+        f"<p>Duplicate matching used: same filename + same size. "
+        f"MD5 checksums were computed for all candidate pairs "
+        f"(mtime tolerance: {result.get('mtime_fuzz', 5)}s).</p>"
+    )
 
     # ── section 3: folder structure analysis ──
     fc_list        = result["folder_comparisons"]
@@ -1007,38 +935,7 @@ Comparing {n} directories</p>
 
     parts.append(f"<h2>3. Folder Structure Analysis ({len(fc_list)} shared folders)</h2>")
 
-    # ── part 1: actionability panel ──
-    parts.append("<h3>Fully duplicated subtrees — safe to delete</h3>")
-    if not safe_roots:
-        parts.append(
-            "<p>No folder subtrees are fully identical across all services.</p>"
-        )
-    else:
-        parts.append(
-            "<p>Each subtree below is 100% identical across all copies. "
-            "Deleting from any one service is safe.</p>"
-        )
-        svc_hdrs = "".join(f'<th>{html.escape(l)}</th>' for l in labels)
-        parts.append(
-            f'<table><tr><th>Folder</th>{svc_hdrs}<th>Files in subtree</th></tr>'
-        )
-        for fc in sorted(safe_roots, key=lambda x: x["folder_path"]):
-            svc_cells = "".join(
-                '<td style="color:#28a745;font-weight:bold">✓</td>'
-                if l in fc["services_present"] else
-                '<td style="color:#aaa">—</td>'
-                for l in labels
-            )
-            parts.append(
-                f'<tr>'
-                f'<td><code>{html.escape(fc["folder_path"])}</code></td>'
-                f'{svc_cells}'
-                f'<td>{fc["subtree_total_files"]:,}</td>'
-                f'</tr>'
-            )
-        parts.append("</table>")
-
-    # ── part 2: folder tree ──
+    # ── part 1: folder tree ──
     parts.append("<h3>Folder tree</h3>")
     parts.append(
         "<p>Expand any folder to see file-level detail. "
@@ -1174,6 +1071,249 @@ Comparing {n} directories</p>
         "&#8618; symlink"
         "</p>"
     )
+
+    # ── part 2: actionability panel ──
+    parts.append("<h3>Fully duplicated subtrees — safe to delete</h3>")
+    if not safe_roots:
+        parts.append(
+            "<p>No folder subtrees are fully identical across all services.</p>"
+        )
+    else:
+        parts.append(
+            "<p>Each subtree below has identical content in every service that contains it (✓). "
+            "Services marked — do not have this folder at all. "
+            "Deleting from any ✓ service is safe as long as at least one other ✓ service retains a copy.</p>"
+        )
+        svc_hdrs = "".join(f'<th>{html.escape(l)}</th>' for l in labels)
+        parts.append(
+            f'<table><tr><th>Folder</th>{svc_hdrs}<th>Files in subtree</th></tr>'
+        )
+        for fc in sorted(safe_roots, key=lambda x: x["folder_path"]):
+            svc_cells = "".join(
+                '<td style="color:#28a745;font-weight:bold">✓</td>'
+                if l in fc["services_present"] else
+                '<td style="color:#aaa">—</td>'
+                for l in labels
+            )
+            parts.append(
+                f'<tr>'
+                f'<td><code>{html.escape(fc["folder_path"])}</code></td>'
+                f'{svc_cells}'
+                f'<td>{fc["subtree_total_files"]:,}</td>'
+                f'</tr>'
+            )
+        parts.append("</table>")
+
+    # ── section 4: files requiring action ──
+    conflicts = result.get("conflict_groups", [])
+    diverged_symlinks = [s for s in result.get("symlinks", []) if s.get("symlink_status") == "target_diverged"]
+    total_action_items = len(conflicts) + len(diverged_symlinks)
+    parts.append(f'<h2 id="s4">4. Files Requiring Action ({total_action_items})</h2>')
+    if not conflicts and not diverged_symlinks:
+        parts.append(
+            "<p>No content conflicts found — all matched files have identical content "
+            "(or matching was skipped with <code>--no-checksum</code>).</p>"
+        )
+    else:
+        parts.append(
+            "<p>These files share a name and size across services but have "
+            "<strong>different content</strong>. Review each before deleting any copy.</p>"
+            "<p>"
+            "<strong>⚠ different&nbsp;·&nbsp;diverged</strong> — content differs, "
+            "timestamps differ; keep the newer copy.<br>"
+            "<strong>⚡ different&nbsp;·&nbsp;phantom</strong> — content differs despite "
+            "matching timestamps; keep both copies.<br>"
+            "<strong>&#8618; mixed type</strong> — one service has a regular file and "
+            "another has a symlink with the same name.<br>"
+            "<strong>&#8618; target_diverged</strong> — both services have a symlink with "
+            "the same name but pointing to different targets.</p>"
+        )
+        if conflicts:
+            svc_headers = "".join(
+                f'<th>{html.escape(l)}</th>' for l in labels
+            )
+            parts.append(
+                f'<table><tr><th>File</th><th>Folder</th><th>Status</th>{svc_headers}</tr>'
+            )
+            for i, g in enumerate(sorted(conflicts, key=lambda x: x["rel_path"])):
+                rp = Path(g["rel_path"])
+                folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
+                cm = g.get("content_match", "different")
+                vs = g["version_status"]
+                if cm == "mixed_type":
+                    symbol = "&#8618;"
+                    row_cls = "conflict-row"
+                    status_parts = ["mixed&nbsp;type"]
+                else:
+                    symbol = "⚡" if vs == "phantom" else "⚠"
+                    row_cls = "phantom-row" if vs == "phantom" else "conflict-row"
+                    status_parts = [f"different&nbsp;·&nbsp;{html.escape(vs)}"]
+                    if vs == "diverged" and g.get("newest_in"):
+                        status_parts.append(
+                            f'<br><span style="font-size:11px;color:#666">'
+                            f'newer in {html.escape(g["newest_in"])}</span>'
+                        )
+
+                svc_cells = ""
+                for label in labels:
+                    det = g["service_details"].get(label)
+                    if det:
+                        if det.get("is_symlink"):
+                            tgt = det.get("symlink_target") or "—"
+                            svc_cells += (
+                                f'<td class="service-detail">'
+                                f'&#8618; symlink<br>'
+                                f'<span style="font-size:11px;color:#666">'
+                                f'&rarr; {html.escape(str(tgt))}</span></td>'
+                            )
+                        else:
+                            size_val = det.get("size", 0)
+                            size_str = human_size(size_val) if size_val is not None and size_val >= 0 else "—"
+                            svc_cells += (
+                                f'<td class="service-detail">'
+                                f'{size_str}<br>'
+                                f'{html.escape(det["mtime"])}</td>'
+                            )
+                    else:
+                        svc_cells += '<td style="color:#aaa">—</td>'
+
+                extra_note = ""
+                if cm == "mixed_type":
+                    extra_note = (
+                        '<tr class="conflict-row">'
+                        f'<td colspan="{3 + len(labels)}" style="font-size:12px;color:#666;'
+                        f'font-style:italic;padding:4px 10px">'
+                        'One service has a regular file and another has a symlink with the same name. '
+                        'Cannot safely deduplicate without understanding your backup strategy.'
+                        '</td></tr>'
+                    )
+
+                parts.append(
+                    f'<tr class="{row_cls}" id="action-{i}">'
+                    f'<td><strong>{symbol} {html.escape(g["name_orig"])}</strong></td>'
+                    f'<td><code>{html.escape(folder_str)}</code></td>'
+                    f'<td>{"".join(status_parts)}</td>'
+                    f'{svc_cells}</tr>'
+                    + extra_note
+                )
+            parts.append("</table>")
+        # Render target_diverged symlinks in Section 4
+        if diverged_symlinks:
+            parts.append('<h3>Diverged Symlinks</h3>')
+            parts.append(
+                '<p>These symlinks point to different targets across services. '
+                'Review before deleting to avoid losing references.</p>'
+            )
+            for sym in sorted(diverged_symlinks, key=lambda x: x["rel_path"]):
+                parts.append(
+                    f'<div class="conflict-row">'
+                    f'<span class="sym-symlink">&#8618;</span> '
+                    f'<strong>{html.escape(sym["name_orig"])}</strong>'
+                    f'<span style="color:#888;margin-left:8px">{html.escape(sym.get("folder", ""))}</span>'
+                    f'</div>'
+                )
+                parts.append('<table>')
+                parts.append('<tr><th>Service</th><th>Symlink Target</th></tr>')
+                for label, target in sym.get("symlink_targets", {}).items():
+                    target_str = html.escape(str(target)) if target else '<em>unresolvable</em>'
+                    parts.append(f'<tr><td>{html.escape(label)}</td><td><code>{target_str}</code></td></tr>')
+                parts.append('</table>')
+
+    # ── section 5: duplicate file list ──
+    parts.append(f"<h2>5. Duplicate Files ({len(dups)} confirmed)</h2>")
+    if not dups:
+        parts.append("<p>No duplicate files found.</p>")
+    else:
+        parts.append('<table><tr><th>File</th><th>Folder</th><th>Size</th>'
+                     '<th>Found in</th><th>Match</th><th>Version</th></tr>')
+        for g in sorted(dups, key=lambda x: x["rel_path"]):
+            found_in = ", ".join(g["matches"].keys())
+            content_match  = g.get("content_match", "unverified")
+            version_status = g.get("version_status", "same")
+            match_cell   = badge(content_match, content_match)
+            version_cell = badge(version_status, version_status)
+            rp = Path(g["rel_path"])
+            folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
+            parts.append(f'<tr>'
+                         f'<td>{html.escape(g["name_orig"])}</td>'
+                         f'<td><code>{html.escape(folder_str)}</code></td>'
+                         f'<td style="white-space:nowrap">{human_size(g["size"])}</td>'
+                         f'<td>{html.escape(found_in)}</td>'
+                         f'<td>{match_cell}</td>'
+                         f'<td>{version_cell}</td></tr>')
+        parts.append("</table>")
+
+    # Symlinks subsection
+    symlinks_data = result.get("symlinks", [])
+    if symlinks_data:
+        parts.append(f'<h3>Symlinks ({len(symlinks_data)})</h3>')
+        parts.append(
+            '<table><tr><th>Name</th><th>Target</th><th>Status</th><th>Services</th></tr>'
+        )
+        for sym in sorted(symlinks_data, key=lambda x: x["rel_path"]):
+            targets = sym.get("symlink_targets", {})
+            target_display = next((v for v in targets.values() if v), "—")
+            status = sym.get("symlink_status", "unknown")
+            services_list = sym.get("services", [])
+            services = ", ".join(services_list)
+            parts.append(
+                f'<tr>'
+                f'<td><strong>&#8618; {html.escape(sym["name_orig"])}</strong><br>'
+                f'<small style="color:#888">{html.escape(sym.get("folder", ""))}</small></td>'
+                f'<td><code style="font-size:11px">'
+                f'{html.escape(str(target_display))}</code></td>'
+                f'<td>{badge(f"symlink · {status}", "symlink")}</td>'
+                f'<td>{html.escape(services)}</td>'
+                f'</tr>'
+            )
+        parts.append('</table>')
+
+    # Version-Diverged Files subsection
+    if divs:
+        parts.append(f'<h3>Version-Diverged Files ({len(divs)})</h3>')
+        parts.append(
+            '<p>These files have identical (or unverified) content across services but different '
+            'modification timestamps (beyond the mtime tolerance). '
+            'Safe to delete older copies once content is confirmed.</p>'
+        )
+        div_svc_hdrs = "".join(f'<th>{html.escape(l)}</th>' for l in labels)
+        parts.append(
+            '<table><tr><th>File</th><th>Folder</th><th>Size</th>'
+            f'<th>Found in</th><th>Newest in</th><th>Age gap (days)</th>{div_svc_hdrs}</tr>'
+        )
+        for g in sorted(divs, key=lambda x: x["rel_path"]):
+            found_in = ", ".join(g["matches"].keys())
+            rp = Path(g["rel_path"])
+            folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
+            newest = html.escape(g.get("newest_in") or "—")
+            age_str = f'{(g.get("age_difference_days") or 0):.1f}'
+            date_cells = ""
+            for l in labels:
+                match_rec = g["matches"].get(l)
+                if match_rec and match_rec.get("mtime"):
+                    dt_str = datetime.fromtimestamp(
+                        match_rec["mtime"], tz=timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M")
+                    is_newest = l == g.get("newest_in")
+                    star = " ★" if is_newest else ""
+                    fw = "font-weight:bold;" if is_newest else ""
+                    date_cells += (
+                        f'<td style="white-space:nowrap;font-size:12px;{fw}">{dt_str}{star}</td>'
+                    )
+                else:
+                    date_cells += '<td style="color:#aaa">—</td>'
+            parts.append(
+                f'<tr style="background:#fffde7">'
+                f'<td>{html.escape(g["name_orig"])}</td>'
+                f'<td><code>{html.escape(folder_str)}</code></td>'
+                f'<td style="white-space:nowrap">{human_size(g["size"])}</td>'
+                f'<td>{html.escape(found_in)}</td>'
+                f'<td><strong>{newest}</strong></td>'
+                f'<td style="text-align:center">{age_str}</td>'
+                f'{date_cells}'
+                f'</tr>'
+            )
+        parts.append('</table>')
 
     # ── footer ──
     parts.append(f'<div class="footer">Cloud Storage Duplicate Analysis · '

@@ -114,12 +114,10 @@ Each run produces two files side-by-side:
 The HTML report has five sections:
 
 1. **File Counts** — how many files are in each directory
-2. **Duplicate File Summary** — pairwise and all-services duplicate counts
-3. **Duplicate Files** — every confirmed duplicate with size, match confidence, and version status
-4. **Version-Diverged Files** — files whose copies have different modification dates, with the newest copy called out
-5. **Folder Structure Analysis** — each shared folder classified as identical, subset/superset, or overlapping, with per-service unique file lists
-
-Rows highlighted in **yellow** need attention: they are duplicates where the copies have drifted out of sync.
+2. **Duplicate File Summary** — per-pair counts of identical/different/unverified files, with version status (same/diverged/phantom/mixed-type) breakdown
+3. **Folder Structure Analysis** — collapsible folder tree with per-folder file status, plus a safe-to-delete subtree panel
+4. **Files Requiring Action** — files with different content across services that need manual review before deletion
+5. **Duplicate Files** — confirmed duplicates with size, match status, version status; includes symlinks and version-diverged files subsections
 
 ## Project Structure
 
