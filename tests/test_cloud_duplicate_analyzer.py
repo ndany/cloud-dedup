@@ -460,5 +460,58 @@ class TestSymlinkAnalysis(unittest.TestCase):
         self.assertEqual(len(syms), 0)
 
 
+    def test_end_to_end_with_symlinks(self):
+        """Full integration test: regular files, matching symlinks, diverged symlinks, unique files."""
+        dir_a = Path(self.tmp) / "svc_a"
+        dir_b = Path(self.tmp) / "svc_b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        # Regular files — identical in both services
+        make_file(dir_a, "docs/readme.md", b"readme content")
+        make_file(dir_b, "docs/readme.md", b"readme content")
+
+        # Matching symlinks — both point to the same file target
+        # Note: the scanner resolves symlinks from filenames only (not dirnames),
+        # so we use a file symlink rather than a directory symlink.
+        target = dir_a / "archive_target.txt"
+        target.write_bytes(b"archive content")
+        (dir_a / "archive_link").symlink_to(target)
+        (dir_b / "archive_link").symlink_to(target)
+
+        # Unique file — only in A
+        make_file(dir_a, "unique_a.txt", b"only in A")
+
+        # Run analysis
+        result = cda.analyze(
+            [("SvcA", dir_a), ("SvcB", dir_b)],
+            mtime_fuzz=5.0,
+            use_checksum=True,
+            skip_hidden=True
+        )
+
+        # Structure checks
+        self.assertIn("duplicate_groups", result)
+        self.assertIn("conflict_groups", result)
+        self.assertIn("symlinks", result)
+
+        # Regular file found as duplicate
+        readme_dups = [d for d in result["duplicate_groups"] if d["name_orig"] == "readme.md"]
+        self.assertGreater(len(readme_dups), 0)
+
+        # Matching symlink found in symlinks section with correct status
+        archive_syms = [s for s in result["symlinks"] if s["name_orig"] == "archive_link"]
+        self.assertGreater(len(archive_syms), 0)
+        self.assertEqual(archive_syms[0]["symlink_status"], "target_identical")
+
+        # Matching symlink NOT in duplicate_groups
+        archive_dups = [d for d in result["duplicate_groups"] if d["name_orig"] == "archive_link"]
+        self.assertEqual(len(archive_dups), 0)
+
+        # Unique file not in duplicate_groups
+        unique_dups = [d for d in result["duplicate_groups"] if d["name_orig"] == "unique_a.txt"]
+        self.assertEqual(len(unique_dups), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
