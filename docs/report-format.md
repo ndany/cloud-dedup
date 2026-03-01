@@ -27,17 +27,24 @@ A stat grid showing the number of files in each directory and its percentage of 
 
 ### Section 2: Duplicate File Summary
 
-A table showing pairwise duplicate counts (e.g. how many files appear in both Google Drive and Dropbox) and, when three or more directories are compared, the count of files present in all services simultaneously.
+A table showing per-pair match and version breakdowns across all compared service pairs:
 
-Also shows the number of files that are **unique** to each service (i.e. not duplicated anywhere).
+| Column | Description |
+|---|---|
+| Service Pair | The two services being compared (e.g. `Google Drive↔Dropbox`) |
+| Match Type | Color-coded counts: **identical** (green), **different** (red), **unverified** (gray) |
+| Version Status | Color-coded counts: **diverged** (blue), **phantom** (red), **mixed-type** (purple), **same** (gray) |
+| Total | All files shared between the pair (duplicates + conflicts) |
+
+Also shows per-service unique file counts (files not duplicated anywhere).
 
 ### Section 3: Folder Structure Analysis
 
 Two parts:
 
-- **Part 1 — Fully duplicated subtrees** panel: a table listing each `safe_to_delete_roots` entry with a per-service ✓ or — column and a total file count for the subtree. Only shown when at least one fully-identical subtree exists.
+- **Part 1 — Folder tree**: collapsible `<details>`/`<summary>` nodes. Each node shows the subtree status symbol (★ = identical subtree, ~ = partially duplicated, ✗ = has conflicts), per-folder file counts, and file-level detail within each expanded folder. Files shared across services are listed under "Shared across services" and annotated with ★/✓/⚠/⚡ per their match status; ⚠ and ⚡ files link to Section 4. Files unique to one service are listed under "Only in &lt;service&gt;" with a ◆ marker.
 
-- **Part 2 — Folder tree**: collapsible `<details>`/`<summary>` nodes. Each node shows the subtree status symbol (★ = identical subtree, ~ = partially duplicated, ✗ = has conflicts), per-folder file counts, and file-level detail within each expanded folder. Files shared across services are listed under "Shared across services" and annotated with ★/✓/⚠/⚡ per their match status; ⚠ and ⚡ files link to Section 4. Files unique to one service are listed under "Only in &lt;service&gt;" with a → marker.
+- **Part 2 — Fully duplicated subtrees** panel: a table listing each `safe_to_delete_roots` entry with a per-service ✓ or — column and a total file count for the subtree. Only shown when at least one fully-identical subtree exists.
 
 ### Section 4: Files Requiring Action
 
@@ -58,7 +65,7 @@ Sorted by age gap (largest first). Columns:
 
 ### Section 5: Duplicate Files
 
-Two subsections:
+Three subsections:
 
 **Duplicate Files** — A row per confirmed duplicate group (files with `content_match = identical` or `unverified`). Columns:
 
@@ -71,6 +78,8 @@ Two subsections:
 | Match | Combined `content_match · version_status` badge, e.g. `identical · same`, `identical · diverged`, `unverified · same` |
 
 **Symlinks** — A row per symlink pair where both services agree on the resolved target. Each row shows the symlink name, relative folder, the resolved target path, and which services contain it. Annotated with the ↪ symbol. Dangling symlinks (no resolved target) are shown with a `—` in the Target column.
+
+**Version-Diverged Files** — Files where `content_match = identical` (or `unverified`) but `version_status = diverged`. Content matches (or was not verified); only the modification timestamp differs beyond the tolerance window. Columns: File, Folder, Size, Found in, Newest in (which service has the latest copy). Safe to delete older copies once content is confirmed.
 
 ---
 

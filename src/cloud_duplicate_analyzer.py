@@ -1257,9 +1257,9 @@ Comparing {n} directories</p>
     if divs:
         parts.append(f'<h3>Version-Diverged Files ({len(divs)})</h3>')
         parts.append(
-            '<p>These files have identical content across services but different modification '
-            'timestamps (beyond the mtime tolerance). The copy with the newest timestamp is '
-            'shown. Safe to delete older copies — content is confirmed identical.</p>'
+            '<p>These files have identical (or unverified) content across services but different '
+            'modification timestamps (beyond the mtime tolerance). The copy with the newest '
+            'timestamp is shown. Safe to delete older copies once content is confirmed.</p>'
         )
         parts.append(
             '<table><tr><th>File</th><th>Folder</th><th>Size</th>'
