@@ -481,6 +481,22 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
                 "content_match":  g["content_match"],
                 "version_status": g["version_status"],
                 "conflict_index": None,
+                "is_symlink":     False,
+                "symlink_target": None,
+            }
+    for s in symlinks:
+        rp = Path(s["rel_path"])
+        folder = str(rp.parent) if str(rp.parent) != "." else "(root)"
+        key = (s["name_orig"].lower(), folder)
+        # Pick a representative symlink target from the first service that has one
+        target = next((v for v in s.get("symlink_targets", {}).values() if v), None)
+        if key not in _file_classifications:
+            _file_classifications[key] = {
+                "content_match":  "symlink",
+                "version_status": s.get("symlink_status", "target_identical"),
+                "conflict_index": None,
+                "is_symlink":     True,
+                "symlink_target": target,
             }
 
     # ── pairwise duplicate counts ─────────────────────────────────
@@ -662,8 +678,10 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
 # ─────────────────────────────────────────────────────── HTML report ──
 
 
-def _file_sym(content_match: str, version_status: str) -> tuple:
+def _file_sym(content_match: str, version_status: str, is_symlink: bool = False) -> tuple:
     """Returns (symbol_char, css_class) for a file classification."""
+    if is_symlink:
+        return ("↪", "sym-symlink")
     if content_match in ("identical", "unverified") and version_status == "same":
         return ("★", "sym-is")
     if content_match in ("identical", "unverified") and version_status == "diverged":
@@ -751,7 +769,9 @@ code { background:#f0f0f0; padding:1px 4px; border-radius:3px; font-size:12px; }
 .sym-id { color: #17a2b8; }
 .sym-dd { color: #dc3545; }
 .sym-dp { color: #fd7e14; }
-.sym-uniq { color: #6c757d; }
+.sym-uniq { color: #ff9900; font-weight: bold; }
+.sym-symlink { color: #0066cc; font-weight: bold; }
+.badge-symlink { background-color: #e6f2ff; color: #0066cc; border: 1px solid #0066cc; }
 """
 
 def badge(text, cls=None):
@@ -835,6 +855,30 @@ Comparing {n} directories</p>
                          f'<td>{match_cell}</td></tr>')
         parts.append("</table>")
 
+    # Symlinks subsection
+    symlinks_data = result.get("symlinks", [])
+    if symlinks_data:
+        parts.append(f'<h3>Symlinks ({len(symlinks_data)})</h3>')
+        parts.append(
+            '<table><tr><th>Name</th><th>Target</th><th>Status</th><th>Services</th></tr>'
+        )
+        for sym in sorted(symlinks_data, key=lambda x: x["rel_path"]):
+            targets = sym.get("symlink_targets", {})
+            target_display = next((v for v in targets.values() if v), "—")
+            status = sym.get("symlink_status", "unknown")
+            services = ", ".join(sym.get("services", []))
+            parts.append(
+                f'<tr>'
+                f'<td><strong>&#8618; {html.escape(sym["name_orig"])}</strong><br>'
+                f'<small style="color:#888">{html.escape(sym.get("folder", ""))}</small></td>'
+                f'<td><code style="font-size:11px">'
+                f'{html.escape(str(target_display))}</code></td>'
+                f'<td>{badge(f"symlink · {status}", "symlink")}</td>'
+                f'<td>{html.escape(services)}</td>'
+                f'</tr>'
+            )
+        parts.append('</table>')
+
     # ── section 4: files requiring action ──
     conflicts = result.get("conflict_groups", [])
     parts.append(f"<h2>4. Files Requiring Action ({len(conflicts)} files)</h2>")
@@ -851,7 +895,9 @@ Comparing {n} directories</p>
             "<strong>⚠ different&nbsp;·&nbsp;diverged</strong> — content differs, "
             "timestamps differ; keep the newer copy.<br>"
             "<strong>⚡ different&nbsp;·&nbsp;phantom</strong> — content differs despite "
-            "matching timestamps; keep both copies.</p>"
+            "matching timestamps; keep both copies.<br>"
+            "<strong>&#8618; mixed type</strong> — one service has a regular file and "
+            "another has a symlink with the same name.</p>"
         )
         svc_headers = "".join(
             f'<th>{html.escape(l)}</th>' for l in labels
@@ -862,27 +908,55 @@ Comparing {n} directories</p>
         for i, g in enumerate(sorted(conflicts, key=lambda x: x["rel_path"])):
             rp = Path(g["rel_path"])
             folder_str = str(rp.parent) if str(rp.parent) != "." else "(root)"
+            cm = g.get("content_match", "different")
             vs = g["version_status"]
-            symbol = "⚡" if vs == "phantom" else "⚠"
-            row_cls = "phantom-row" if vs == "phantom" else "conflict-row"
-            status_parts = [f"different&nbsp;·&nbsp;{html.escape(vs)}"]
-            if vs == "diverged" and g.get("newest_in"):
-                status_parts.append(
-                    f'<br><span style="font-size:11px;color:#666">'
-                    f'newer in {html.escape(g["newest_in"])}</span>'
-                )
+            if cm == "mixed_type":
+                symbol = "&#8618;"
+                row_cls = "conflict-row"
+                status_parts = ["mixed&nbsp;type"]
+            else:
+                symbol = "⚡" if vs == "phantom" else "⚠"
+                row_cls = "phantom-row" if vs == "phantom" else "conflict-row"
+                status_parts = [f"different&nbsp;·&nbsp;{html.escape(vs)}"]
+                if vs == "diverged" and g.get("newest_in"):
+                    status_parts.append(
+                        f'<br><span style="font-size:11px;color:#666">'
+                        f'newer in {html.escape(g["newest_in"])}</span>'
+                    )
 
             svc_cells = ""
             for label in labels:
                 det = g["service_details"].get(label)
                 if det:
-                    svc_cells += (
-                        f'<td class="service-detail">'
-                        f'{human_size(det["size"])}<br>'
-                        f'{html.escape(det["mtime"])}</td>'
-                    )
+                    if det.get("is_symlink"):
+                        tgt = det.get("symlink_target") or "—"
+                        svc_cells += (
+                            f'<td class="service-detail">'
+                            f'&#8618; symlink<br>'
+                            f'<span style="font-size:11px;color:#666">'
+                            f'&rarr; {html.escape(str(tgt))}</span></td>'
+                        )
+                    else:
+                        size_val = det.get("size", 0)
+                        size_str = human_size(size_val) if size_val is not None and size_val >= 0 else "—"
+                        svc_cells += (
+                            f'<td class="service-detail">'
+                            f'{size_str}<br>'
+                            f'{html.escape(det["mtime"])}</td>'
+                        )
                 else:
                     svc_cells += '<td style="color:#aaa">—</td>'
+
+            extra_note = ""
+            if cm == "mixed_type":
+                extra_note = (
+                    '<tr class="conflict-row">'
+                    f'<td colspan="{3 + len(labels)}" style="font-size:12px;color:#666;'
+                    f'font-style:italic;padding:4px 10px">'
+                    'One service has a regular file and another has a symlink with the same name. '
+                    'Cannot safely deduplicate without understanding your backup strategy.'
+                    '</td></tr>'
+                )
 
             parts.append(
                 f'<tr class="{row_cls}" id="action-{i}">'
@@ -890,6 +964,7 @@ Comparing {n} directories</p>
                 f'<td><code>{html.escape(folder_str)}</code></td>'
                 f'<td>{"".join(status_parts)}</td>'
                 f'{svc_cells}</tr>'
+                + extra_note
             )
         parts.append("</table>")
 
@@ -936,7 +1011,8 @@ Comparing {n} directories</p>
     parts.append("<h3>Folder tree</h3>")
     parts.append(
         "<p>Expand any folder to see file-level detail. "
-        "★ = fully identical subtree; ~ = partially duplicated; ✗ = has conflicts.</p>"
+        "★ = fully identical subtree; ~ = partially duplicated; ✗ = has conflicts; "
+        "&#9670; = unique to one service; &#8618; = symlink.</p>"
     )
 
     # Build per-folder file list: folder_str → {label → [name_orig]}
@@ -1003,8 +1079,10 @@ Comparing {n} directories</p>
                 out.append('<div class="tree-file-section">Shared across services</div>')
                 for fname, cls_info in in_multiple:
                     if cls_info:
+                        is_sym = cls_info.get("is_symlink", False)
                         sym, sym_cls = _file_sym(
-                            cls_info["content_match"], cls_info["version_status"]
+                            cls_info["content_match"], cls_info["version_status"],
+                            is_symlink=is_sym
                         )
                         link = ""
                         if cls_info.get("conflict_index") is not None:
@@ -1012,10 +1090,16 @@ Comparing {n} directories</p>
                                 f' <a href="#action-{cls_info["conflict_index"]}" '
                                 f'style="font-size:10px;color:#888">&rarr;&nbsp;&sect;4</a>'
                             )
+                        target_span = ""
+                        if is_sym and cls_info.get("symlink_target"):
+                            target_span = (
+                                f' <span style="font-size:11px;color:#888">'
+                                f'&rarr; {html.escape(cls_info["symlink_target"])}</span>'
+                            )
                         out.append(
                             f'<div class="tree-file">'
                             f'<span class="{sym_cls}">{sym}</span> '
-                            f'{html.escape(fname)}{link}</div>'
+                            f'{html.escape(fname)}{target_span}{link}</div>'
                         )
                     else:
                         out.append(
@@ -1032,7 +1116,7 @@ Comparing {n} directories</p>
                     for fname in ufiles:
                         out.append(
                             f'<div class="tree-file">'
-                            f'<span class="sym-uniq">&rarr;</span> '
+                            f'<span class="sym-uniq">&#9670;</span> '
                             f'{html.escape(fname)}</div>'
                         )
 
@@ -1055,7 +1139,8 @@ Comparing {n} directories</p>
         "✓ identical&nbsp;·&nbsp;diverged &nbsp;|&nbsp; "
         "⚠ different&nbsp;·&nbsp;diverged &nbsp;|&nbsp; "
         "⚡ different&nbsp;·&nbsp;phantom &nbsp;|&nbsp; "
-        "&rarr; unique to one service"
+        "&#9670; unique to one service &nbsp;|&nbsp; "
+        "&#8618; symlink"
         "</p>"
     )
 
