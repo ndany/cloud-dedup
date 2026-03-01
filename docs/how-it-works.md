@@ -43,6 +43,36 @@ Files with `content_match = different` go into **conflict groups** (Section 4 �
 
 Empty files (size == 0) are always classified `(identical, same)` regardless of mtime.
 
+## Symlink Handling
+
+### Detection Scope
+
+Only **file-type symlinks** are detected and reported. Directory symlinks appear in `dirnames` during `os.walk` and are traversed as regular directories; they are not reported as individual symlink entries. This is intentional — following directory symlinks allows discovery of files underneath them without special-casing the walk.
+
+### Detection Method
+
+Before calling `Path.stat()`, `Path.is_symlink()` is checked. A symlink record carries:
+
+- `is_symlink = True`
+- `symlink_target` — the resolved absolute path as a string, or `None` for a dangling (broken) symlink
+- `size = -1` — a sentinel value indicating no meaningful file size
+
+On macOS, `Path.resolve()` returns a non-`None` path even for dangling symlinks. On other platforms, resolution of a broken symlink may raise an `OSError`, in which case `symlink_target` is recorded as `None`.
+
+### Comparison
+
+Symlinks are compared by their **resolved target path string**, not by reading the target's content. Two symlinks in different services are considered "identical" if their `symlink_target` strings are equal.
+
+### Results Routing
+
+| Situation | Destination |
+|---|---|
+| Both services have a symlink at the same relative path | `symlinks` list (informational) |
+| One service has a regular file, another has a symlink at the same name | `conflict_groups` with `content_match = "mixed_type"` (Section 4) |
+| Both services have symlinks but targets differ | `conflict_groups` with `version_status = "target_diverged"` (Section 4) |
+
+Diverged symlinks (`target_diverged`) appear in **Section 4 — Files Requiring Action** because the services disagree on where the symlink points.
+
 ## Folder Analysis
 
 For every folder path that appears in two or more directories, the set of filenames in that folder is compared across services. The relationship is classified as:

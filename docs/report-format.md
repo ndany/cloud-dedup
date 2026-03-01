@@ -5,6 +5,18 @@ Each run of `cloud_duplicate_analyzer.py` produces two output files with the sam
 - `<output>.html` — Visual report, open in any browser
 - `<output>.json` — Raw structured data
 
+## Symbol Legend
+
+| Symbol | Meaning |
+|---|---|
+| ★ | Identical file/folder across all services |
+| ✓ | Identical content, different modification time (diverged) |
+| ⚠ | Different content, different modification time |
+| ⚡ | Different content, same modification time (phantom — dangerous false positive) |
+| ◆ | Unique to one service |
+| ↪ | Symlink (file-type only; compared by target path) |
+| ↪⚠ | Symlink in one service, regular file in another (mixed-type conflict) |
+
 ## HTML Report
 
 The HTML report has five sections.
@@ -29,18 +41,26 @@ Two parts:
 
 ### Section 4: Files Requiring Action
 
-Files that share a name and size across services but have **different content** (i.e. `content_match = "different"`). Sorted by age gap (largest first). Columns:
+Files that share a name across services but require manual review before deletion. This includes:
+
+- Files with `content_match = "different"` — same name and size but differing MD5 checksums.
+- Symlinks with `version_status = "target_diverged"` — both services have a symlink at the same path but pointing to different targets (symbol: ↪⚠).
+- Mixed-type entries with `content_match = "mixed_type"` — one service has a regular file, another has a symlink at the same name (symbol: ↪⚠).
+
+Sorted by age gap (largest first). Columns:
 
 | Column | Description |
 |---|---|
 | File | Filename |
 | Folder | Relative folder path |
-| Status | `different · diverged` (timestamps differ) or `different · phantom` (timestamps agree but content differs) |
+| Status | `different · diverged`, `different · phantom`, or `mixed_type · target_diverged` |
 | Per-service columns | Size and modification timestamp for each service |
 
 ### Section 5: Duplicate Files
 
-A row per confirmed duplicate group (files with `content_match = identical` or `unverified`). Columns:
+Two subsections:
+
+**Duplicate Files** — A row per confirmed duplicate group (files with `content_match = identical` or `unverified`). Columns:
 
 | Column | Description |
 |---|---|
@@ -49,6 +69,8 @@ A row per confirmed duplicate group (files with `content_match = identical` or `
 | Size | Human-readable file size |
 | Found in | Which services contain this file |
 | Match | Combined `content_match · version_status` badge, e.g. `identical · same`, `identical · diverged`, `unverified · same` |
+
+**Symlinks** — A row per symlink pair where both services agree on the resolved target. Each row shows the symlink name, relative folder, the resolved target path, and which services contain it. Annotated with the ↪ symbol. Dangling symlinks (no resolved target) are shown with `target: (dangling)`.
 
 ---
 
