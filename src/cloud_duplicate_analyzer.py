@@ -201,6 +201,24 @@ def classify_pair(a: dict, b: dict, mtime_fuzz: float, use_checksum: bool):
     of mtime. There is no content to version, so mtime differences on empty files
     are always sync artifacts rather than meaningful edits.
     """
+    # Handle symlinks by target path (not content)
+    a_is_symlink = a.get("is_symlink", False)
+    b_is_symlink = b.get("is_symlink", False)
+
+    if a_is_symlink != b_is_symlink:
+        # Mixed: one service has a file, the other has a symlink
+        return ("mixed_type", "conflict")
+
+    if a_is_symlink and b_is_symlink:
+        # Both are symlinks: compare by target path string
+        a_target = a.get("symlink_target")
+        b_target = b.get("symlink_target")
+        if a_target == b_target:
+            return ("symlink", "target_identical")
+        else:
+            return ("symlink", "target_diverged")
+
+    # Both are regular files: continue to existing logic below
     if a["name"] != b["name"] or a["size"] != b["size"]:
         return None
 
