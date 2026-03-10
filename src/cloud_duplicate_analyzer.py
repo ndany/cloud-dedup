@@ -558,58 +558,69 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
             prefix = folder + "/"
             return any(f.startswith(prefix) for f in folder_sets[label])
         present = [l for l in labels if label_has_presence(l, folder)]
-        if len(present) < 2:
+        if not present:
             continue
         # For file-set comparisons at this level, only use files directly here.
         sets_here = {l: folder_sets[l].get(folder, set()) for l in present}
 
-        # Determine relationship
-        sets_list = list(sets_here.values())
-        if all(s == sets_list[0] for s in sets_list):
-            relationship = "identical"
+        if len(present) < 2:
+            # Folder exists in only one service — mark as unique.
+            only_label = present[0]
+            files_here = sets_here[only_label]
+            all_in_folder = files_here
+            details = {
+                "in_all": [],
+                f"{only_label}_only": sorted(files_here),
+            }
+            relationship = "unique"
         else:
-            # Check subset/superset among all pairs
-            relationships = set()
-            for la, lb in combinations(present, 2):
-                sa, sb = sets_here[la], sets_here[lb]
-                if sa == sb:
-                    relationships.add("identical")
-                elif sa < sb:
-                    relationships.add("subset")
-                elif sa > sb:
-                    relationships.add("superset")
-                else:
-                    relationships.add("overlap")
-            if relationships == {"identical"}:
+            # Determine relationship
+            sets_list = list(sets_here.values())
+            if all(s == sets_list[0] for s in sets_list):
                 relationship = "identical"
-            elif "overlap" in relationships:
-                relationship = "overlap"
-            elif "subset" in relationships or "superset" in relationships:
-                relationship = "subset/superset"
             else:
-                relationship = "overlap"
+                # Check subset/superset among all pairs
+                relationships = set()
+                for la, lb in combinations(present, 2):
+                    sa, sb = sets_here[la], sets_here[lb]
+                    if sa == sb:
+                        relationships.add("identical")
+                    elif sa < sb:
+                        relationships.add("subset")
+                    elif sa > sb:
+                        relationships.add("superset")
+                    else:
+                        relationships.add("overlap")
+                if relationships == {"identical"}:
+                    relationship = "identical"
+                elif "overlap" in relationships:
+                    relationship = "overlap"
+                elif "subset" in relationships or "superset" in relationships:
+                    relationship = "subset/superset"
+                else:
+                    relationship = "overlap"
 
-        # Compute per-service unique and shared sets
-        all_in_folder = set.union(*sets_here.values())
-        in_all = set.intersection(*sets_here.values())
+            # Compute per-service unique and shared sets
+            all_in_folder = set.union(*sets_here.values())
+            in_all = set.intersection(*sets_here.values())
 
-        details = {"in_all": sorted(in_all)}
-        for label in present:
-            only = sets_here[label] - set.union(*(sets_here[l] for l in present if l != label))
-            details[f"{label}_only"] = sorted(only)
+            details = {"in_all": sorted(in_all)}
+            for label in present:
+                only = sets_here[label] - set.union(*(sets_here[l] for l in present if l != label))
+                details[f"{label}_only"] = sorted(only)
 
-        # Pairwise shared (not in all)
-        for la, lb in combinations(present, 2):
-            in_pair = (sets_here[la] & sets_here[lb]) - in_all
-            if in_pair:
-                details[f"{la}+{lb}"] = sorted(in_pair)
+            # Pairwise shared (not in all)
+            for la, lb in combinations(present, 2):
+                in_pair = (sets_here[la] & sets_here[lb]) - in_all
+                if in_pair:
+                    details[f"{la}+{lb}"] = sorted(in_pair)
 
         folder_comparisons.append({
             "folder_path": folder if folder != "." else "(root)",
             "services_present": present,
             "relationship": relationship,
             "total_unique_files": len(all_in_folder),
-            "files_in_all": len(in_all),
+            "files_in_all": len(all_in_folder) if len(present) < 2 else len(in_all),
             "details": details,
         })
 
@@ -633,9 +644,12 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
             ]
 
         all_identical = all(d["relationship"] == "identical" for d in descendants)
+        all_unique    = all(d["relationship"] == "unique"    for d in descendants)
         any_overlap   = any(d["relationship"] == "overlap"   for d in descendants)
 
-        if all_identical:
+        if all_unique:
+            fc["subtree_status"] = "unique"
+        elif all_identical:
             fc["subtree_status"] = "identical"
         elif any_overlap:
             fc["subtree_status"] = "overlap"
@@ -744,6 +758,7 @@ tr:nth-child(even) td { background: #f4f8fc; }
 .badge-overlap    { background:#fff3cd; color:#856404; }
 .badge-subset     { background:#d1ecf1; color:#0c5460; }
 .badge-superset   { background:#d1ecf1; color:#0c5460; }
+.badge-unique     { background:#fff3cd; color:#856404; }   /* amber — review */
 .action-row    { }
 .phantom-row td { background:#fff8e1 !important; }
 .conflict-row td { background:#fff0f0 !important; }
@@ -933,7 +948,12 @@ Comparing {n} directories</p>
     file_cls       = result.get("_file_classifications", {})
     scanned_recs   = result.get("_scanned_records", {})
 
-    parts.append(f"<h2>3. Folder Structure Analysis ({len(fc_list)} shared folders)</h2>")
+    shared_count = sum(1 for fc in fc_list if fc["relationship"] != "unique")
+    unique_count = sum(1 for fc in fc_list if fc["relationship"] == "unique")
+    heading_detail = f"{shared_count} shared"
+    if unique_count:
+        heading_detail += f", {unique_count} unique"
+    parts.append(f"<h2>3. Folder Structure Analysis ({heading_detail} folders)</h2>")
 
     # ── part 1: folder tree ──
     parts.append("<h3>Folder tree</h3>")
@@ -962,6 +982,7 @@ Comparing {n} directories</p>
             "identical": ("★", "sym-is"),
             "partial":   ("~", "sym-id"),
             "overlap":   ("✗", "sym-dd"),
+            "unique":    ("◆", "sym-uniq"),
         }.get(ss, ("?", ""))
 
         file_ct     = fc["total_unique_files"] if fc else 0
@@ -969,11 +990,17 @@ Comparing {n} directories</p>
         child_ct    = len(children)
         folder_path = fc["folder_path"] if fc else name
 
+        # For unique folders, show which service owns them
+        status_text = html.escape(ss)
+        if ss == "unique" and fc and fc.get("services_present"):
+            svc = ", ".join(fc["services_present"])
+            status_text = f'only in {html.escape(svc)}'
+
         summary_html = (
             f'<span class="{node_cls}">{node_sym}</span> '
             f'<strong>{html.escape(name)}/</strong>'
             f'&nbsp;<span style="color:#888;font-size:12px">'
-            f'{html.escape(ss)}'
+            f'{status_text}'
             + (f' &nbsp;·&nbsp; {file_ct} files' if file_ct else '')
             + (f' &nbsp;·&nbsp; {child_ct} subfolders' if child_ct else '')
             + (f' &nbsp;·&nbsp; {subtree_ct} total' if child_ct and subtree_ct != file_ct else '')
