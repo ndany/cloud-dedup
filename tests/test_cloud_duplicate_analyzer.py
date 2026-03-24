@@ -260,7 +260,7 @@ class TestSymlinkDetection(unittest.TestCase):
         symlink_path.symlink_to(regular_file)
 
         # Scan directory with symlink
-        records = cda.scan_directory(Path(self.tmp) / "b", skip_hidden=False)
+        records, _ = cda.scan_directory(Path(self.tmp) / "b", skip_hidden=False)
 
         # Find the symlink record
         symlink_record = next((r for r in records if r["name_orig"] == "link.txt"), None)
@@ -283,7 +283,7 @@ class TestSymlinkDetection(unittest.TestCase):
         symlink_path.symlink_to(Path(self.tmp) / "nonexistent_target.txt")
 
         # Must not crash
-        records = cda.scan_directory(Path(self.tmp) / "scan_dir", skip_hidden=False)
+        records, _ = cda.scan_directory(Path(self.tmp) / "scan_dir", skip_hidden=False)
 
         dangling = next((r for r in records if r["name_orig"] == "dangling.txt"), None)
         assert dangling is not None
@@ -298,7 +298,7 @@ class TestSymlinkDetection(unittest.TestCase):
         """Verify regular files have is_symlink=False."""
         make_file(self.tmp, "a/regular.txt", b"content")
 
-        records = cda.scan_directory(Path(self.tmp) / "a", skip_hidden=False)
+        records, _ = cda.scan_directory(Path(self.tmp) / "a", skip_hidden=False)
 
         regular_record = next((r for r in records if r["name_orig"] == "regular.txt"), None)
 
