@@ -2,6 +2,9 @@
 output/
 docs/security/audits/
 
+# Coverage reports
+htmlcov/
+
 # Python
 __pycache__/
 *.py[cod]

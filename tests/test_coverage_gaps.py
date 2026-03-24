@@ -93,7 +93,7 @@ class TestScanDirectory(unittest.TestCase):
     def test_skip_hidden_files(self):
         make_file(self.tmp, "visible.txt", b"v")
         make_file(self.tmp, ".hidden.txt", b"h")
-        records = cda.scan_directory(Path(self.tmp), skip_hidden=True)
+        records, _ = cda.scan_directory(Path(self.tmp), skip_hidden=True)
         names = [r["name_orig"] for r in records]
         self.assertIn("visible.txt", names)
         self.assertNotIn(".hidden.txt", names)
@@ -101,7 +101,7 @@ class TestScanDirectory(unittest.TestCase):
     def test_include_hidden_files(self):
         make_file(self.tmp, "visible.txt", b"v")
         make_file(self.tmp, ".hidden.txt", b"h")
-        records = cda.scan_directory(Path(self.tmp), skip_hidden=False)
+        records, _ = cda.scan_directory(Path(self.tmp), skip_hidden=False)
         names = [r["name_orig"] for r in records]
         self.assertIn("visible.txt", names)
         self.assertIn(".hidden.txt", names)
@@ -109,7 +109,7 @@ class TestScanDirectory(unittest.TestCase):
     def test_skip_hidden_dirs(self):
         make_file(self.tmp, ".hidden_dir/file.txt", b"h")
         make_file(self.tmp, "visible_dir/file.txt", b"v")
-        records = cda.scan_directory(Path(self.tmp), skip_hidden=True)
+        records, _ = cda.scan_directory(Path(self.tmp), skip_hidden=True)
         folders = [r["folder"] for r in records]
         self.assertNotIn(".hidden_dir", folders)
         self.assertIn("visible_dir", folders)
@@ -117,7 +117,7 @@ class TestScanDirectory(unittest.TestCase):
     def test_ds_store_skipped(self):
         make_file(self.tmp, ".DS_Store", b"junk")
         make_file(self.tmp, "real.txt", b"data")
-        records = cda.scan_directory(Path(self.tmp), skip_hidden=False)
+        records, _ = cda.scan_directory(Path(self.tmp), skip_hidden=False)
         names = [r["name_orig"] for r in records]
         self.assertNotIn(".DS_Store", names)
         self.assertIn("real.txt", names)
@@ -126,7 +126,7 @@ class TestScanDirectory(unittest.TestCase):
         target = make_file(self.tmp, "target.txt", b"content")
         link = Path(self.tmp) / "link.txt"
         link.symlink_to(target)
-        records = cda.scan_directory(Path(self.tmp), skip_hidden=False)
+        records, _ = cda.scan_directory(Path(self.tmp), skip_hidden=False)
         link_rec = next(r for r in records if r["name_orig"] == "link.txt")
         self.assertTrue(link_rec["is_symlink"])
         self.assertEqual(link_rec["size"], -1)
@@ -135,13 +135,49 @@ class TestScanDirectory(unittest.TestCase):
 
     def test_regular_file_fields(self):
         make_file(self.tmp, "sub/file.txt", b"hello", mtime=1000.0)
-        records = cda.scan_directory(Path(self.tmp), skip_hidden=True)
+        records, _ = cda.scan_directory(Path(self.tmp), skip_hidden=True)
         rec = next(r for r in records if r["name_orig"] == "file.txt")
         self.assertFalse(rec["is_symlink"])
         self.assertIsNone(rec["symlink_target"])
         self.assertEqual(rec["size"], 5)
         self.assertEqual(rec["folder"], "sub")
         self.assertEqual(rec["name"], "file.txt")  # lowercased
+
+    def test_no_warnings_for_normal_scan(self):
+        make_file(self.tmp, "file.txt", b"data")
+        _, warnings = cda.scan_directory(Path(self.tmp), skip_hidden=True)
+        self.assertEqual(warnings, [])
+
+    def test_empty_dir_warning(self):
+        empty = Path(self.tmp) / "empty"
+        empty.mkdir()
+        records, warnings = cda.scan_directory(empty, skip_hidden=True)
+        self.assertEqual(records, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("0 files found", warnings[0])
+
+    def test_permission_error_warning(self):
+        subdir = Path(self.tmp) / "locked"
+        subdir.mkdir()
+        make_file(self.tmp, "locked/secret.txt", b"data")
+        subdir.chmod(0o000)
+        try:
+            records, warnings = cda.scan_directory(Path(self.tmp), skip_hidden=False)
+            self.assertTrue(any("Permission denied" in w for w in warnings))
+        finally:
+            subdir.chmod(0o755)
+
+    def test_permission_error_on_root_dir(self):
+        root = Path(self.tmp) / "noaccess"
+        root.mkdir()
+        make_file(self.tmp, "noaccess/file.txt", b"data")
+        root.chmod(0o000)
+        try:
+            records, warnings = cda.scan_directory(root, skip_hidden=False)
+            self.assertEqual(records, [])
+            self.assertTrue(any("Permission denied" in w for w in warnings))
+        finally:
+            root.chmod(0o755)
 
 
 # ── _file_sym ────────────────────────────────────────────────────────
@@ -870,6 +906,51 @@ class TestRenderHtmlFullIntegration(_RenderHelper, unittest.TestCase):
         html = cda.render_html(r)
         self.assertIn("<!DOCTYPE html>", html)
         self.assertIn("</html>", html)
+
+
+class TestScanWarningsInReport(_RenderHelper, unittest.TestCase):
+    """Verify scan_warnings flow into analyze result and render_html output."""
+
+    def test_scan_warnings_in_result_when_no_issues(self):
+        r = self._run(
+            [("a.txt", b"data", 1000.0)],
+            [("b.txt", b"data", 1000.0)],
+        )
+        self.assertEqual(r["scan_warnings"], {})
+
+    def test_scan_warnings_in_html_when_present(self):
+        r = self._run(
+            [("a.txt", b"data", 1000.0)],
+            [("b.txt", b"data", 1000.0)],
+        )
+        r["scan_warnings"] = {"DropBox": ["Permission denied: [Errno 1] Operation not permitted: '/Users/me/Dropbox'"]}
+        r["mtime_fuzz"] = 5
+        html = cda.render_html(r)
+        self.assertIn("Scan Warnings", html)
+        self.assertIn("DropBox", html)
+        self.assertIn("Permission denied", html)
+        self.assertIn("Full Disk Access", html)
+
+    def test_scan_warnings_not_in_html_when_absent(self):
+        r = self._run(
+            [("a.txt", b"data", 1000.0)],
+            [("b.txt", b"data", 1000.0)],
+        )
+        r["mtime_fuzz"] = 5
+        html = cda.render_html(r)
+        self.assertNotIn("Scan Warnings", html)
+
+    def test_empty_dir_produces_warning_in_analyze(self):
+        dir_a = Path(self.tmp) / "populated"
+        dir_b = Path(self.tmp) / "empty_dir"
+        dir_b.mkdir(parents=True, exist_ok=True)
+        make_file(dir_a, "file.txt", b"data", 1000.0)
+        r = cda.analyze(
+            [("Full", dir_a), ("Empty", dir_b)],
+            mtime_fuzz=5.0, use_checksum=True, skip_hidden=True,
+        )
+        self.assertIn("Empty", r["scan_warnings"])
+        self.assertTrue(any("0 files found" in w for w in r["scan_warnings"]["Empty"]))
 
 
 if __name__ == "__main__":

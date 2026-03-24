@@ -122,15 +122,25 @@ def fmt_ts(ts: float) -> str:
 
 # ─────────────────────────────────────────────────────── scanning ──
 
-def scan_directory(root: Path, skip_hidden: bool) -> list[dict]:
-    """Return a list of file records for all files under root.
+def scan_directory(root: Path, skip_hidden: bool) -> tuple[list[dict], list[str]]:
+    """Return (records, warnings) for all files under root.
 
     Regular file records contain: rel_path, name, name_orig, size, mtime, full_path, folder, is_symlink=False, symlink_target=None.
     Symlink records contain: rel_path, name, name_orig, size=-1, mtime=0.0, full_path, folder, is_symlink=True, symlink_target (str or None).
     Symlinks are detected with Path.is_symlink() and compared by target path, not content.
+
+    Warnings are generated for:
+    - Permission errors encountered during directory traversal (e.g., macOS Full Disk Access not granted)
+    - Empty scan results (0 files found — may indicate a permissions issue or genuinely empty directory)
     """
     records = []
-    for dirpath, dirnames, filenames in os.walk(root):
+    warnings = []
+    walk_errors = []
+
+    def _on_walk_error(err):
+        walk_errors.append(err)
+
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_on_walk_error):
         if skip_hidden:
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
             filenames = [f for f in filenames if not f.startswith(".")]
@@ -173,7 +183,12 @@ def scan_directory(root: Path, skip_hidden: bool) -> list[dict]:
                     "is_symlink": False,
                     "symlink_target": None,
                 })
-    return records
+
+    for err in walk_errors:
+        warnings.append(f"Permission denied: {err}")
+    if not records and not walk_errors:
+        warnings.append(f"0 files found in {root} — directory may be empty or inaccessible")
+    return records, warnings
 
 
 # ─────────────────────────────────────────────────────── matching ──
@@ -265,9 +280,15 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
 
     print("Scanning directories …")
     scanned = {}
+    scan_warnings: dict[str, list[str]] = {}
     for label, path in dirs:
         print(f"  [{label}]  {path}")
-        scanned[label] = scan_directory(path, skip_hidden)
+        records, warnings = scan_directory(path, skip_hidden)
+        scanned[label] = records
+        if warnings:
+            scan_warnings[label] = warnings
+            for w in warnings:
+                print(f"  ⚠  {label}: {w}", file=sys.stderr)
         print(f"           {len(scanned[label]):,} files found")
 
     # Build name+size indexes per directory
@@ -676,6 +697,7 @@ def analyze(dirs: list[tuple[str, Path]], mtime_fuzz: float, use_checksum: bool,
         "labels": labels,
         "dirs": {label: str(path) for label, path in dirs},
         "total_files": {label: len(recs) for label, recs in scanned.items()},
+        "scan_warnings": scan_warnings,
         "duplicate_groups": duplicate_groups,
         "conflict_groups":        conflict_groups,
         "symlinks":               symlinks,
@@ -833,6 +855,20 @@ Comparing {n} directories</p>
                      f'<td><code>{html.escape(result["dirs"][label])}</code></td>'
                      f'<td>{result["total_files"][label]:,}</td></tr>')
     parts.append("</table>")
+
+    # scan warnings banner
+    scan_warnings = result.get("scan_warnings", {})
+    if scan_warnings:
+        parts.append('<div style="background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; '
+                     'border-radius:6px; padding:12px 16px; margin:16px 0;">')
+        parts.append('<strong>⚠ Scan Warnings</strong><ul style="margin:8px 0 0 0; padding-left:20px;">')
+        for label, warnings in scan_warnings.items():
+            for w in warnings:
+                parts.append(f'<li><strong>{html.escape(label)}:</strong> {html.escape(w)}</li>')
+        parts.append('</ul><p style="margin:8px 0 0 0; font-size:12px;">'
+                     'Results below may be incomplete. On macOS, grant Full Disk Access to your '
+                     'terminal app in System Settings → Privacy &amp; Security → Full Disk Access.</p>')
+        parts.append('</div>')
 
     # ── section 2: duplicate summary ──
     parts.append("<h2>2. Duplicate File Summary</h2>")
@@ -1450,6 +1486,14 @@ def main():
     print(f"\n  Folder relationships:")
     for rel, cnt in sorted(rc.items()):
         print(f"    {rel:20s}: {cnt}")
+    scan_warnings = result.get("scan_warnings", {})
+    if scan_warnings:
+        print(f"\n  ⚠  SCAN WARNINGS — results may be incomplete:")
+        for label, warnings in scan_warnings.items():
+            for w in warnings:
+                print(f"    {label}: {w}")
+        print(f"  On macOS, grant Full Disk Access to your terminal app in "
+              f"System Settings → Privacy & Security → Full Disk Access.")
 
 
 if __name__ == "__main__":
